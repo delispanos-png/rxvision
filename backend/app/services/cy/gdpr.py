@@ -14,7 +14,7 @@ from app.repositories.base import jsonsafe
 from app.repositories.cy import CyDispensingRepository, CyPatientRepository
 
 PREFIX = "cy:"
-DIRECT_IDENTIFIERS = ("full_name", "dob", "hio_code")
+DIRECT_IDENTIFIERS = ("full_name", "dob", "hio_code", "contact", "notify_prefs")
 
 
 def is_cy(subject_id: str) -> bool:

@@ -55,9 +55,12 @@ async def describe(token: str) -> dict:
         return {"ok": False, "error": "bad_token"}
     tenant_id, pid = v
     t = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"name": 1, "company": 1})
+    name = ((t or {}).get("company") or {}).get("name") or (t or {}).get("name") or ""
+    if pid.startswith("cy:"):   # πελάτης ΓεΣΥ (cy_patients)
+        from app.services.cy import contacts as cy_contacts
+        return {"ok": True, "pharmacy": name, "already": await cy_contacts.is_unsubscribed(tenant_id, pid)}
     c = await shared_db()["patient_contacts"].find_one(
         {"tenant_id": tenant_id, "_id": _oid(pid)}, {"unsubscribed_at": 1})
-    name = ((t or {}).get("company") or {}).get("name") or (t or {}).get("name") or ""
     return {"ok": True, "pharmacy": name, "already": bool((c or {}).get("unsubscribed_at"))}
 
 
@@ -79,7 +82,10 @@ async def apply(token: str, *, scope: str = "all") -> dict:
     tenant_id, pid = v
     db = shared_db()
     now = _now()
-    if scope == "all":
+    if pid.startswith("cy:"):   # πελάτης ΓεΣΥ: η άρνηση γράφεται στην κυπριακή καρτέλα
+        from app.services.cy import contacts as cy_contacts
+        await cy_contacts.unsubscribe(tenant_id, pid, scope)
+    elif scope == "all":
         await db["patient_contacts"].update_one(
             {"tenant_id": tenant_id, "_id": _oid(pid)},
             {"$set": {"unsubscribed_at": now, "marketing_consent": False}})

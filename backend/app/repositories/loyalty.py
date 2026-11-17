@@ -122,6 +122,60 @@ def _tier_info(points: int) -> dict:
 class LoyaltyRepository(BaseRepository):
     collection_name = "loyalty_ledger"
 
+    # ── Κύπρος (ΓεΣΥ) ───────────────────────────────────────────────────────
+    # Ίδιο πρόγραμμα, ίδιοι κανόνες, ίδιο πορτοφόλι. Αλλάζει ΜΟΝΟ η πηγή: μέλος = η «καρτέλα πύλης»
+    # (`cy_portal`) του πελάτη, πόντοι = εκτελέσεις ΓεΣΥ (`cy_dispensings`), συνέπεια = ο ορισμός
+    # των αλυσίδων ΓεΣΥ (`services/cy/chains.adherence`). Ελληνικό φαρμακείο → None, καμία αλλαγή.
+    async def _cy_map(self) -> dict[str, str] | None:
+        if not hasattr(self, "_cy_cache"):
+            t = await self._db["tenants"].find_one({"_id": self.tenant_id}, {"country": 1})
+            if ((t or {}).get("country") or "GR").upper() != "CY":
+                self._cy_cache = None
+            else:
+                self._cy_cache = {str(r["_id"]): r["cy_pseudo_id"] async for r in self._db["patients_anonymized"].find(
+                    {"tenant_id": self.tenant_id, "source": "cy_portal"}, {"cy_pseudo_id": 1})}
+        return self._cy_cache
+
+    async def _cy_chain_analysis(self, cy: dict[str, str]) -> dict:
+        from datetime import datetime as _dt
+
+        from app.services.cy import chains as cych
+        today = _dt.now(tz=cych.TZ).date()
+        by_pseudo: dict[str, list] = defaultdict(list)
+        for c in await cych.chains(self.tenant_id, today=today, match={"patient_ref": {"$in": list(cy.values())}}):
+            by_pseudo[c["patient_ref"]].append(c)
+        out: dict = {}
+        for shell, pseudo in cy.items():
+            cs = by_pseudo.get(pseudo, [])
+            a = cych.adherence(cs, today)
+            out[ObjectId(shell)] = {"chains": len(cs), "compliance": a["compliance"], "expected": a["missed"],
+                                    "available": sum(1 for c in cs if c["status"] in ("soon", "late"))}
+        return out
+
+    async def _cy_refills(self, cy: dict[str, str], enrolled: dict, campaigns: list, cutoff) -> dict:
+        from app.repositories.cy import CyDispensingRepository
+        out: dict = defaultdict(lambda: {"n": 0, "wsum_pct": 0})
+        shell_of = {cy[r]: r for r in enrolled if r in cy}
+        if not shell_of:
+            return out
+        rows = await CyDispensingRepository(tenant_id=self.tenant_id).aggregate([
+            {"$match": {"patient_ref": {"$in": list(shell_of)}}},
+            {"$project": {"_id": 0, "patient_ref": 1, "dispensed_at": 1}}])
+        for e in rows:
+            ref = shell_of[e["patient_ref"]]
+            ex, en = e.get("dispensed_at"), enrolled.get(ref)
+            if isinstance(ex, str):
+                ex = datetime.fromisoformat(ex)
+            if not (ex and en):
+                continue
+            exa = ex if ex.tzinfo else ex.replace(tzinfo=timezone.utc)
+            ena = en if getattr(en, "tzinfo", None) else en.replace(tzinfo=timezone.utc)
+            if exa < ena or (cutoff and exa < cutoff):
+                continue
+            out[ref]["n"] += 1
+            out[ref]["wsum_pct"] += _campaign_pct(exa, campaigns)
+        return out
+
     # ── config ──────────────────────────────────────────────────────────────
     async def config(self) -> dict:
         doc = await self._db["loyalty_config"].find_one({"tenant_id": self.tenant_id}) or {}
@@ -296,6 +350,19 @@ class LoyaltyRepository(BaseRepository):
                 oids.append(ObjectId(r))
             except Exception:  # noqa: BLE001
                 pass
+        cy = await self._cy_map()
+        if cy is not None:   # Κύπρος: μήνας γέννησης από την ημερομηνία γέννησης του XML (όχι ΑΜΚΑ)
+            from app.repositories.cy import CyPatientRepository
+            pats = await CyPatientRepository(tenant_id=self.tenant_id).find(
+                {"pseudo_id": {"$in": [cy[r] for r in refs if r in cy]}}, limit=500)
+            dob = {p["pseudo_id"]: str(p.get("dob") or "") for p in pats}
+            credited_cy: list[str] = []
+            for ref in refs:
+                d = dob.get(cy.get(ref, ""), "")
+                if len(d) >= 7 and d[5:7].isdigit() and int(d[5:7]) == month and await self._credit_once(
+                        ref, cents, source="birthday", dedup_key=f"bday:{ref}:{year}", reason="Δώρο γενεθλίων 🎂"):
+                    credited_cy.append(ref)
+            return credited_cy
         amkas: dict = {}
         async for p in self._db["patients_anonymized"].find(
                 {"tenant_id": self.tenant_id, "_id": {"$in": oids}}, {"amka": 1}):
@@ -471,6 +538,9 @@ class LoyaltyRepository(BaseRepository):
             except Exception:  # noqa: BLE001
                 pass
         out: dict = defaultdict(lambda: {"n": 0, "wsum_pct": 0})
+        cy = await self._cy_map()
+        if cy is not None:
+            return await self._cy_refills(cy, enrolled, campaigns, cutoff)
         if not oids:
             return out
         cur = self._db["prescription_executions"].find(
@@ -490,7 +560,9 @@ class LoyaltyRepository(BaseRepository):
 
     # ── core: members with adherence-derived points/wallet ──────────────────
     async def _build_members(self, cfg: dict, *, restrict: set | None = None) -> list[dict]:
-        chain = await PatientIntelligenceRepository(tenant_id=self.tenant_id)._chain_analysis()
+        cy = await self._cy_map()
+        chain = (await self._cy_chain_analysis(cy) if cy is not None
+                 else await PatientIntelligenceRepository(tenant_id=self.tenant_id)._chain_analysis())
         sums = await self._ledger_sums()
         enrolled = {m["patient_ref"]: m.get("enrolled_at") async for m in
                     self._db["loyalty_members"].find({"tenant_id": self.tenant_id})}

@@ -1805,21 +1805,31 @@ async def open_tenant(body: OpenTenantIn, _: PlatformContext = Depends(get_platf
 
 
 class CyToggleIn(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    rules: dict[str, int] | None = None
 
 
 @router.get("/cy")
 async def cy_settings(_: PlatformContext = Depends(get_platform_admin)):
     """Διακόπτης κυπριακού κομματιού + πόσα κυπριακά φαρμακεία υπάρχουν."""
-    from app.services.cy.gate import cy_enabled
+    from app.services.cy.gate import RULE_BOUNDS, RULE_DEFAULTS, cy_enabled, cy_rules
     n = await shared_db()["tenants"].count_documents({"country": "CY"})
-    return {"enabled": await cy_enabled(), "tenants": n}
+    return {"enabled": await cy_enabled(), "tenants": n, "rules": await cy_rules(),
+            "defaults": RULE_DEFAULTS, "bounds": RULE_BOUNDS}
 
 
 @router.put("/cy")
 async def cy_toggle(body: CyToggleIn, _: PlatformContext = Depends(get_platform_admin)):
-    from app.services.cy.gate import set_cy_enabled
-    return {"enabled": await set_cy_enabled(body.enabled)}
+    """Διακόπτης ή/και κανόνες αλυσίδων ΓεΣΥ (ισχύουν αμέσως, σε κάθε οθόνη και ειδοποίηση)."""
+    from app.services.cy.gate import cy_enabled, cy_rules, set_cy_enabled, set_cy_rules
+    if body.rules is not None:
+        try:
+            await set_cy_rules(body.rules)
+        except ValueError as exc:
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    if body.enabled is not None:
+        await set_cy_enabled(body.enabled)
+    return {"enabled": await cy_enabled(), "rules": await cy_rules()}
 
 
 @router.patch("/tenants/{tenant_id}/status")

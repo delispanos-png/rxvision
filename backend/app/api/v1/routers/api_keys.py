@@ -26,8 +26,9 @@ class KeyIn(BaseModel):
 @router.get("/api-keys")
 async def list_keys(ctx: TenantContext = Depends(require("settings:read"))):
     """Τα κλειδιά του φαρμακείου. **Το μυστικό δεν επιστρέφεται ποτέ** — μόνο το πρόθεμα."""
+    from app.services.cy.gate import tenant_country
     return {"items": await api_keys.list_for(ctx.tenant_id),
-            "scopes": api_keys.SCOPES,
+            "scopes": api_keys.scopes_for(await tenant_country(ctx.tenant_id)),
             "sensitive": sorted(api_keys.SENSITIVE_SCOPES),
             "max_ttl_days": api_keys.MAX_TTL_DAYS}
 
@@ -41,6 +42,12 @@ async def create_key(body: KeyIn, ctx: TenantContext = Depends(require("settings
             "message": "Διάλεξε τουλάχιστον ένα δικαίωμα.",
             "hint": "Δώσε τα λιγότερα δυνατά — αν το πρόγραμμα ενημερώνει μόνο απόθεμα, "
                     "αρκούν τα «Ανάγνωση αποθέματος» και «Ενημέρωση αποθέματος»."})
+    from app.services.cy.gate import tenant_country
+    allowed = api_keys.scopes_for(await tenant_country(ctx.tenant_id))
+    foreign = [s for s in body.scopes if s not in allowed]
+    if foreign:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={
+            "error": "bad_scope", "message": f"Άγνωστο δικαίωμα: {foreign[0]}", "hint": None})
     try:
         return await api_keys.create(
             ctx.tenant_id, name=body.name, scopes=body.scopes, by=ctx.user_id,

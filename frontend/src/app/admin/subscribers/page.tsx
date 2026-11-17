@@ -536,7 +536,11 @@ function OpenTenantModal({ onClose, onDone }: { onClose: () => void; onDone: () 
  *  απαντά 404, για όλα τα φαρμακεία. Ένα κλικ, χωρίς deploy. */
 function CyToggle() {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["admin", "cy"], queryFn: () => adminApi<{ enabled: boolean; tenants: number }>("/admin/cy"), retry: false });
+  type Rules = Record<string, number>;
+  const q = useQuery({ queryKey: ["admin", "cy"], queryFn: () => adminApi<{ enabled: boolean; tenants: number; rules: Rules; defaults: Rules; bounds: Record<string, [number, number]> }>("/admin/cy"), retry: false });
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<Rules | null>(null);
+  const [err, setErr] = useState("");
   const on = !!q.data?.enabled;
   async function flip() {
     const ok = await appConfirm(on
@@ -547,13 +551,50 @@ function CyToggle() {
     await adminApi("/admin/cy", { method: "PUT", body: JSON.stringify({ enabled: !on }) });
     qc.invalidateQueries({ queryKey: ["admin", "cy"] });
   }
+  async function saveRules() {
+    setErr("");
+    try {
+      await adminApi("/admin/cy", { method: "PUT", body: JSON.stringify({ rules: draft }) });
+      qc.invalidateQueries({ queryKey: ["admin", "cy"] });
+      setOpen(false);
+    } catch { setErr("Τιμή εκτός ορίων."); }
+  }
   if (!q.data) return null;
+  const LABELS: Record<string, string> = {
+    drug_interval_days: "Επόμενη φάση φαρμάκων (ημέρες, όταν η συνταγή δεν γράφει διάρκεια)",
+    consumable_interval_days: "Επόμενη φάση αναλωσίμων (ημέρες)",
+    lost_after_days: "«Χάθηκε» μετά από (ημέρες καθυστέρησης)",
+    soon_days: "«Έρχεται σύντομα» μέσα σε (ημέρες)",
+  };
+  const d = draft ?? q.data.rules;
   return (
-    <button type="button" onClick={flip} title={`${q.data.tenants} κυπριακά φαρμακεία`}
-      className={`rounded-lg border px-3 py-2 text-sm font-medium ${on
-        ? "border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100"
-        : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900"}`}>
-      Κύπρος: {on ? "ενεργό" : "ανενεργό"}
-    </button>
+    <div className="relative inline-flex gap-1">
+      <button type="button" onClick={flip} title={`${q.data.tenants} κυπριακά φαρμακεία`}
+        className={`rounded-lg border px-3 py-2 text-sm font-medium ${on
+          ? "border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100"
+          : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-900"}`}>
+        Κύπρος: {on ? "ενεργό" : "ανενεργό"}
+      </button>
+      <button type="button" onClick={() => { setDraft(q.data!.rules); setOpen(!open); }} title="Κανόνες αλυσίδων ΓεΣΥ"
+        className="rounded-lg border border-slate-300 px-2 py-2 text-sm text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300">⚙</button>
+      {open && (
+        <div className="absolute right-0 top-11 z-30 w-96 rounded-xl border border-slate-200 bg-white p-4 text-sm shadow-xl dark:border-slate-700 dark:bg-slate-900">
+          <div className="mb-1 font-semibold">Κανόνες αλυσίδων ΓεΣΥ</div>
+          <p className="mb-3 text-xs text-slate-500">Ισχύουν αμέσως σε όλα τα κυπριακά φαρμακεία: ανοιχτές συνταγές, χαμένοι πελάτες, συμμόρφωση, πιστότητα, ειδοποιήσεις πύλης.</p>
+          {Object.keys(LABELS).map((k) => (
+            <label key={k} className="mb-2 flex items-center justify-between gap-3 text-xs">
+              <span>{LABELS[k]} <span className="text-slate-400">({q.data!.bounds[k]?.[0]}–{q.data!.bounds[k]?.[1]}, προεπ. {q.data!.defaults[k]})</span></span>
+              <input type="number" value={d[k] ?? ""} onChange={(e) => setDraft({ ...d, [k]: parseInt(e.target.value || "0", 10) })}
+                className="w-16 rounded border border-slate-300 px-2 py-1 text-right dark:border-slate-600 dark:bg-slate-800" />
+            </label>
+          ))}
+          {err && <p className="text-xs text-rose-600">{err}</p>}
+          <div className="mt-2 flex justify-end gap-2">
+            <button type="button" onClick={() => setOpen(false)} className="text-xs text-slate-500">Άκυρο</button>
+            <button type="button" onClick={saveRules} className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700">Αποθήκευση</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

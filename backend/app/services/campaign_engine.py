@@ -66,13 +66,21 @@ async def create(tenant_id: str, *, channel: str, message: str, subject: str | N
     διαφορετικό σύνολο από αυτό που ενέκρινε.
     """
     from app.services import comms
+    from app.services.cy.gate import tenant_country
     db = shared_db()
     only = None
-    if audience_rules:
-        from app.services import audience as aud
-        only = await aud.resolve(tenant_id, audience_rules, purpose=purpose)
-    rows = await comms.campaign_audience(tenant_id, channel, segment, value, only_ids=only) \
-        if channel != "push" else await comms.push_audience(tenant_id, segment, value, only_ids=only)
+    if await tenant_country(tenant_id) == "CY":
+        # Κύπρος: κοινό από cy_patients (το Audience Engine και τα ελληνικά segments στηρίζονται σε ΗΔΥΚΑ)
+        if audience_rules:
+            raise ValueError("audience_rules_not_supported_for_cy")
+        from app.services.cy import contacts as cy_contacts
+        rows = (await cy_contacts.audience(tenant_id, channel, segment))["recipients"]
+    else:
+        if audience_rules:
+            from app.services import audience as aud
+            only = await aud.resolve(tenant_id, audience_rules, purpose=purpose)
+        rows = await comms.campaign_audience(tenant_id, channel, segment, value, only_ids=only) \
+            if channel != "push" else await comms.push_audience(tenant_id, segment, value, only_ids=only)
 
     cid = ObjectId()
     field = "email" if channel == "email" else "mobile"

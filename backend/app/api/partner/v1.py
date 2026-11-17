@@ -13,11 +13,12 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 
 from app.api.partner.deps import (PartnerContext, get_partner, require, require_module,
                                   require_scope)
 from app.api.partner.schemas import (Advise, AdviseIn, ApiError, CustomerLink, CustomerLinkIn,
+                                     CyImportResult,
                                      Execution, Interaction, InteractionCheck, InteractionCheckIn,
                                      LoyaltyCard, LoyaltyConfig, LoyaltyEnrollIn, LoyaltyRedeem,
                                      LoyaltyRedeemIn, LoyaltyReward, Order, Page, Ping, Product,
@@ -1049,3 +1050,67 @@ async def clinical_advise(
         referral_needed=bool(ref_block.get("needed")),
         referral_urgency=ref_block.get("urgency"),
         source=res.get("source"))
+
+
+# ── Κύπρος: XML εκτελέσεων ΓεΣΥ (η υπηρεσία των Windows στέλνει μόνη της) ──────────────────────
+@router.post("/cy/dispensings", tags=["Cyprus — GHS dispensings"], status_code=status.HTTP_200_OK,
+             response_model=CyImportResult,
+             responses={**COMMON_ERRORS,
+                        400: {"model": ApiError, "description": "Empty body or not XML/ZIP."},
+                        404: {"model": ApiError, "description": "The pharmacy is not a Cyprus (GHS) "
+                                                                "pharmacy, or the feature is not yet open."},
+                        413: {"model": ApiError, "description": "Body larger than the limit."}},
+             summary="Send GHS dispensing XML files",
+             description="""
+**Cyprus pharmacies only.** Send the dispensing XML that the GHS portal produces, exactly as it
+is. One XML per call, or many inside a **ZIP**.
+
+```bash
+curl -X POST https://api.rxvision.gr/v1/cy/dispensings \\
+  -H "X-API-Key: …" -H "Content-Type: application/xml" \\
+  --data-binary @Dispensing_12345.xml
+```
+
+For a ZIP use `Content-Type: application/zip`.
+
+### Safe to resend — always
+Nothing is ever counted twice. Sending the **same** file again reports it under `duplicates`.
+If the GHS portal re-issues the **same dispensing changed** (a correction or a cancelled line),
+the new version replaces the old one and is reported under `updated`. An **older** version than
+the one we hold is ignored. So the simplest correct client is: *send every file you see, retry on
+any network error.*
+
+### Partial success is normal
+A bad file does not fail the others. Each rejected file is listed in `errors` with the reason, for
+example a file that belongs to another pharmacy, or whose footer totals do not add up.
+
+> 🔒 The patient's ID number is **never stored**. We keep a pharmacy-specific pseudonym.
+""")
+async def cy_dispensings(
+    request: Request,
+    ctx: PartnerContext = Depends(require_scope("gesy_xml:write")),
+) -> dict:
+    from app.services.cy.gate import cy_enabled, tenant_country
+    from app.services.cy.importer import MAX_TOTAL_BYTES, CyImportError, import_files
+    if not await cy_enabled() or await tenant_country(ctx.tenant_id) != "CY":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={
+            "error": "not_a_cyprus_pharmacy",
+            "message": "This endpoint is only for Cyprus (GHS) pharmacies.",
+            "hint": "Check that the key was issued by a pharmacy in Cyprus."})
+    body = await request.body()
+    if len(body) > MAX_TOTAL_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail={
+            "error": "too_large", "message": f"The body is larger than {MAX_TOTAL_BYTES // 1_000_000} MB.",
+            "hint": "Split the files into several calls."})
+    if not body.strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={
+            "error": "empty_body", "message": "No file was sent.",
+            "hint": "Send the XML as the request body (Content-Type: application/xml)."})
+    ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    name = "upload.zip" if ctype in ("application/zip", "application/x-zip-compressed") else "upload.xml"
+    try:
+        res = await import_files(ctx.tenant_id, [(name, body)])
+    except CyImportError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail={
+            "error": "bad_file", "message": str(exc), "hint": None}) from None
+    return {k: res[k] for k in ("files", "imported", "updated", "duplicates", "failed", "errors")}

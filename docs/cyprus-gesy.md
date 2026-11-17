@@ -74,21 +74,55 @@
 - Γνωστά κενά: ειδοποιήσεις push/υπενθυμίσεις/γενέθλια πιστότητας κλειδώνουν σε ΑΜΚΑ → δεν φτάνουν σε
   κυπριακούς λογαριασμούς· αλλαγές προφίλ δεν συγχρονίζονται στην καρτέλα του φαρμακείου.
 
-## Endpoints
-`GET /cy/overview` · `GET /cy/open-prescriptions?status=` · `GET /cy/lost-customers` ·
-`GET /cy/patients/{ref}` · `GET /cy/not-dispensed` · `GET /cy/pc2` ·
-`GET /cy/doctors` · `GET /cy/staff` · `GET /cy/consumables` · `GET /cy/recall?lot=&gtin=` ·
-`GET /cy/dispensings` · `POST /cy/import` (φαρμακείο, όλα με `require_cy`) ·
-`GET/PUT /admin/cy` (διακόπτης, `system:read` / `system:write`).
+## Endpoints (φαρμακείο, όλα με `require_cy`)
+- Dashboard: `GET /cy/dashboard/summary|timeseries|heatmap|top` (`date_from`, `date_to` χωρίς το «έως»).
+- Λίστες: `GET /cy/dispensings` (αναζήτηση/φίλτρα/σελίδες) · `GET /cy/dispensings/{id}` ·
+  `GET /cy/patients` · `GET /cy/patients/{ref}` · `GET /cy/doctors` · `GET /cy/doctors/{id}`.
+- Συνέχεια: `GET /cy/overview` · `/open-prescriptions?status=` · `/lost-customers` · `/not-dispensed` ·
+  `/pc2` · `/staff` · `/consumables` · `/recall?lot=&gtin=`.
+- Πελάτης: `PUT /cy/patients/{ref}/contact` · `POST /cy/patients/{ref}/portal-invite` ·
+  `POST /cy/patients/{ref}/loyalty`.
+- Καμπάνιες: `GET /cy/campaigns/segments|audience` · `POST /cy/campaigns` · `GET /cy/campaigns`.
+- Εισαγωγή: `POST /cy/import` (ανέβασμα από την οθόνη).
+- Adminpanel: `GET/PUT /admin/cy` (διακόπτης, `system:read` / `system:write`).
+
+## Αυτόματη λήψη XML (Partner API 1.2.0)
+Για την υπηρεσία των Windows (`Gesy_XML_Service`) ή όποιο πρόγραμμα βλέπει τον φάκελο εξαγωγής:
+
+1. Ο φαρμακοποιός εκδίδει κλειδί στο **Ρυθμίσεις → Κλειδιά API** με το δικαίωμα
+   **«Αποστολή XML εκτελέσεων ΓεΣΥ»** (`gesy_xml:write`). Το κλειδί βλέπει ΜΟΝΟ αυτό το φαρμακείο.
+2. Για κάθε νέο αρχείο: `POST https://api.rxvision.gr/v1/cy/dispensings` με
+   `X-API-Key: rxv_live_…`, `Content-Type: application/xml` και σώμα το XML ακριβώς όπως είναι
+   (ή `application/zip` για πολλά μαζί).
+3. Απάντηση: `{files, imported, updated, duplicates, failed, errors[]}`. Σε σφάλμα δικτύου ή 5xx
+   **ξαναστέλνεις το ίδιο αρχείο**: είναι ασφαλές (ίδιο περιεχόμενο → `duplicates`, διορθωμένη
+   εκτέλεση → `updated`, παλαιότερη εκδοχή → αγνοείται).
+
+Λογική: ΙΔΙΑ με το ανέβασμα από την οθόνη (`services/cy/importer.import_files`): δέσιμο με τον
+πάροχο ΓεΣΥ στο πρώτο αρχείο, απόρριψη αρχείων άλλου φαρμακείου, ταυτότητα ποτέ αποθηκευμένη.
+Ελληνικό φαρμακείο → 404 `not_a_cyprus_pharmacy`. Τα δικαιώματα κλειδιών είναι ανά χώρα
+(`api_keys.COUNTRY_SCOPES`): η Κύπρος δεν βλέπει ελληνικά (π.χ. `patients:read`, που θέλει ΑΜΚΑ).
+
+## Επικοινωνία, καμπάνιες, ειδοποιήσεις, πιστότητα
+- **Στοιχεία:** `cy_patients.contact` (κινητό/email/συγκατάθεση). Το XML δεν τα έχει· τα γράφει ο
+  φαρμακοποιός ή ο πελάτης από την πύλη (`services/cy/contacts.sync_from_account`, μέσω του
+  συνδέσμου πύλης, όχι ΑΜΚΑ). ΠΟΤΕ στα ελληνικά `patient_contacts`.
+- **Καμπάνιες:** ΚΟΙΝΗ μηχανή (`campaign_engine` + `comms.send_*`)· η Κύπρος δίνει μόνο το κοινό
+  (`contacts.audience`). Παραλήπτης = `patient_ref "cy:<pseudo>"`, που αναγνωρίζουν
+  `notify_prefs.allows_patient` και `unsubscribe`. Κοινά από συνταγές = δεδομένα υγείας → μόνο `care`.
+- **Ειδοποίηση φάσης:** `services/cy/reminders.next_step_pushes` (beat `cy-next-step`, 07:05 UTC),
+  0–2 ημέρες πριν, μία φορά ανά συνταγή+φάση (`reminder_sent`).
+- **Πιστότητα:** ίδιο `LoyaltyRepository`· για CY η πηγή είναι οι εκτελέσεις ΓεΣΥ και η συνέπεια
+  `chains.adherence`. Μέλος = η καρτέλα πύλης (`cy_shell`), που ΔΕΝ σβήνεται στην αποσύνδεση όσο
+  κρατά πόντους.
 
 ## Demo φαρμακείο
 `services/cy/synthetic.py` παράγει συνθετικά XML (ίδια δομή, φανταστικά πρόσωπα, πάροχος `C9999`).
 `seed_demo(tenant_id)` αρνείται να γράψει σε ελληνικό φαρμακείο.
 
 ## Επόμενα
-Πύλη πελατών με κυπριακή ταυτότητα · λήψη από Gesy_XML_Service (κλειδί API) · πραγματικά
-παράθυρα επαναλήψεων (prescription_info). Μετά: κατάλογος
-HIOcode→ATC (από ΟΑΥ), επέκταση λήψης από την πύλη, κοινά κυκλώματα στο κυπριακό μενού.
+Πραγματικά παράθυρα επαναλήψεων (`prescription_info`, περιμένει URL) · κατάλογος HIOcode→ATC (ΟΑΥ) ·
+Προχορηγήσεις · παραγγελίες από τα «Είδη που δεν δόθηκαν».
 
 **Ανοιχτά για την πύλη:** σταθερό `Id` γραμμής ανά εκτέλεση; σταθερά παράθυρα; `QtyDisp=0` χάνεται ή
 μεταφέρεται; τι είναι το `Barcode2`; πώς φαίνεται μια ακύρωση;

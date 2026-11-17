@@ -417,6 +417,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.reminders.dispatch_refill_radar",
         "schedule": crontab(hour=7, minute=0),
     },
+    # Κύπρος — «η επόμενη φάση της συνταγής σου πλησιάζει» (καθημερινά 07:00 UTC = 09:00/10:00 Λευκωσία)
+    "cy-next-step": {
+        "task": "app.workers.reminders.dispatch_cy_next_step",
+        "schedule": crontab(hour=7, minute=5),
+    },
     # Loyalty — «έχεις πόντους, εξαργύρωσε» εβδομαδιαία υπενθύμιση (Δευτέρα 08:00 UTC)
     "loyalty-rewards-nudge": {
         "task": "app.workers.reminders.dispatch_loyalty_rewards",

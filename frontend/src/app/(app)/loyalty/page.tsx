@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Gift, Award, TrendingUp, Wallet, Search, X, ScanLine } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PrintCardButton } from "@/components/loyalty/PrintCard";
@@ -39,6 +40,8 @@ function Kpi({ icon: Icon, label, value, tint }: { icon: typeof Gift; label: str
 
 export default function LoyaltyPage() {
   const t = useT();
+  // Κύπρος: «επαναλήψεις» = φάσεις συνταγής ΓεΣΥ (ίδιος ορισμός με τις Ανοιχτές συνταγές)
+  const openLabel = useCountry() === "CY" ? t("Φάσεις σε αναμονή", "Steps due") : t("Ανοιχτές επαναλήψεις", "Open refills");
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["loyalty"], queryFn: () => api<Overview>("/loyalty") });
   const [tab, setTab] = useState<string>("members");
@@ -90,7 +93,7 @@ export default function LoyaltyPage() {
         <Kpi icon={Gift} label={t("Σύνολο πόντων", "Total points")} value={String(data?.kpis.total_points ?? "—")} tint="bg-amber-50 text-amber-600" />
         <Kpi icon={Wallet} label={t("Υποχρέωση (πορτοφόλια)", "Liability")} value={data ? eur(data.kpis.liability_cents) : "—"} tint="bg-emerald-50 text-emerald-600" />
         <Kpi icon={TrendingUp} label={t("Μέση συνέπεια", "Avg adherence")} value={data ? `${data.kpis.avg_compliance}%` : "—"} tint="bg-sky-50 text-sky-600" />
-        <Kpi icon={Gift} label={t("Ανοιχτές επαναλήψεις", "Open refills")} value={String(data?.kpis.open_refills ?? "—")} tint="bg-violet-50 text-violet-600" />
+        <Kpi icon={Gift} label={openLabel} value={String(data?.kpis.open_refills ?? "—")} tint="bg-violet-50 text-violet-600" />
       </div>
 
 
@@ -119,7 +122,7 @@ export default function LoyaltyPage() {
                 <div><div className="text-xs text-slate-500">{t("Κερδισμένη αξία", "Value earned")}</div><div className="text-lg font-bold text-slate-800 dark:text-slate-100">{eur(data.kpis.earned_cents ?? 0)}</div></div>
                 <div><div className="text-xs text-slate-500">{t("Εξαργυρωμένα", "Redeemed")}</div><div className="text-lg font-bold text-slate-800 dark:text-slate-100">{eur(data.kpis.redeemed_cents)}</div></div>
                 <div><div className="text-xs text-slate-500">{t("Ποσοστό αξιοποίησης", "Utilisation rate")}</div><div className="text-lg font-bold text-emerald-600">{data.kpis.redemption_rate ?? 0}%</div></div>
-                <div><div className="text-xs text-slate-500">{t("Ανοιχτές επαναλήψεις", "Open refills")}</div><div className="text-lg font-bold text-violet-600">{data.kpis.open_refills}</div></div>
+                <div><div className="text-xs text-slate-500">{openLabel}</div><div className="text-lg font-bold text-violet-600">{data.kpis.open_refills}</div></div>
               </div>
               {data.kpis.tier_counts && (
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -241,6 +244,7 @@ function ScanModal({ onClose, onCode }: { onClose: () => void; onCode: (code: st
 
 function ConfigCard({ cfg }: { cfg: Cfg }) {
   const t = useT();
+  const cy = useCountry() === "CY";
   const qc = useQueryClient();
   const [f, setF] = useState({...cfg });
   const save = useMutation({
@@ -388,7 +392,9 @@ function ConfigCard({ cfg }: { cfg: Cfg }) {
           <input type="checkbox" checked={!!f.birthday_enabled} onChange={(e) => setF({ ...f, birthday_enabled: e.target.checked })} />
           🎂 {t("Δώρο γενεθλίων", "Birthday gift")}
         </label>
-        <p className="mt-1 text-[11px] text-fuchsia-700 dark:text-fuchsia-300">{t("Bonus πόντων τον μήνα των γενεθλίων κάθε μέλους (μία φορά τον χρόνο). Ο μήνας προκύπτει αυτόματα από τον ΑΜΚΑ.", "Bonus points in each member's birthday month (once a year). The month is derived automatically from the AMKA.")}</p>
+        <p className="mt-1 text-[11px] text-fuchsia-700 dark:text-fuchsia-300">{cy
+          ? t("Bonus πόντων τον μήνα των γενεθλίων κάθε μέλους (μία φορά τον χρόνο). Ο μήνας προκύπτει αυτόματα από την ημερομηνία γέννησης των συνταγών ΓεΣΥ.", "Bonus points in each member's birthday month (once a year). The month comes automatically from the date of birth on the GHS prescriptions.")
+          : t("Bonus πόντων τον μήνα των γενεθλίων κάθε μέλους (μία φορά τον χρόνο). Ο μήνας προκύπτει αυτόματα από τον ΑΜΚΑ.", "Bonus points in each member's birthday month (once a year). The month is derived automatically from the AMKA.")}</p>
         {f.birthday_enabled && (
           <label className="mt-2 block text-xs text-slate-500">{t("Δώρο γενεθλίων (λεπτά)", "Birthday bonus (cents)")}
             <input type="number" value={f.birthday_bonus_cents ?? 0} onChange={num("birthday_bonus_cents")} className="mt-1 w-40 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800" /></label>

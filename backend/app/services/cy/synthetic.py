@@ -139,9 +139,11 @@ def generate(*, patients: int = 60, months: int = 7, today: date | None = None,
                 out.append((f"Dispensing_{disp_no}.xml", _xml(
                     typ="01", rx=rx_no, disp=disp_no, at=at, eff=eff, patient=p, doctor=doctor,
                     staff=rnd.choice(STAFF), lines=lines, tot=tot)))
-                # διαβητικός: αναλώσιμα κάθε 3η εκτέλεση, σε δική τους συνταγή (Type 02)
-                if diabetic and k in (1, 4):
-                    rx_c = rx_no + 500000
+                # διαβητικός: αναλώσιμα ΚΑΘΕ μήνα μαζί με τα φάρμακα, σε δικές τους συνταγές (Type 02)
+                # 3 φάσεων (φάσεις 1-3 και 4-6 = δύο συνταγές). Ίδιος ρυθμός (28 ημ.) με το προεπιλεγμένο
+                # διάστημα αναλωσίμων (30), αλλιώς το demo θα έδειχνε κάθε διαβητικό ως «χαμένο».
+                if diabetic:
+                    rx_c = rx_no + (500000 if k <= 3 else 750000)
                     clines, ctot = [], {"hio": 0, "copay": 0, "pc2": 0, "ben": 0, "total": 0}
                     for code, desc, price in CONSUMABLES:
                         line_no += 1
@@ -150,7 +152,7 @@ def generate(*, patients: int = 60, months: int = 7, today: date | None = None,
                             ctot[key] += a[key]
                         clines.append(
                             f"<Consumable><Id>{line_no}</Id><Barcode/><Barcode2/><Code>{code}</Code>"
-                            f"<PotentialDispInstances>3</PotentialDispInstances><CurrentDispInstance>{1 if k == 1 else 2}</CurrentDispInstance>"
+                            f"<PotentialDispInstances>3</PotentialDispInstances><CurrentDispInstance>{k if k <= 3 else k - 3}</CurrentDispInstance>"
                             f"<Description>{escape(desc)}</Description><QtyPresc>1</QtyPresc><QtyDisp>1</QtyDisp>"
                             f"<DoctorsInstructions/><PharmacistsComments/>{_amount_tags(a)}</Consumable>")
                     disp_no += 1

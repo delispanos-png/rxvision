@@ -12,7 +12,8 @@ export const CY_ALLOWED = ["/cy", "/connect", "/account", "/manual", "/support-l
   "/settings/modules", "/settings/menus", "/settings/gdpr", "/settings/availability",
   "/settings/communications", "/settings/ai-usage", "/settings/api-keys", "/settings/pharmacy-chat",
   // κοινά κυκλώματα που δουλεύουν αυτούσια (βλ. CY_PICK στο navCatalog)
-  "/marketing/coupons", "/eshop-offers", "/eshop-categories", "/eshop-fees", "/warehouse"];
+  "/marketing/coupons", "/eshop-offers", "/eshop-categories", "/eshop-fees", "/warehouse",
+  "/orders-delivery", "/portal-admin", "/loyalty"];
 
 const under = (path: string, base: string) => path === base || path.startsWith(base + "/");
 

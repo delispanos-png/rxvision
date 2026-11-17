@@ -170,6 +170,19 @@ def dispatch_refill_radar() -> dict:
     return _run_async(_run())
 
 
+@celery_app.task(name="app.workers.reminders.dispatch_cy_next_step")
+def dispatch_cy_next_step() -> dict:
+    """Κύπρος: «η επόμενη φάση της συνταγής σου πλησιάζει» (λογική: services/cy/reminders.py)."""
+    async def _run() -> dict:
+        from app.services.cy.reminders import next_step_pushes
+        client, _ = _fresh_db()
+        try:
+            return await next_step_pushes()
+        finally:
+            client.close()
+    return _run_async(_run())
+
+
 @celery_app.task(name="app.workers.reminders.auto_cancel_stale_requests")
 def auto_cancel_stale_requests() -> dict:
     """Αυτόματη ακύρωση αιτημάτων πελατών που ΔΕΝ αποδέχτηκε ο φαρμακοποιός εντός του καθολικού

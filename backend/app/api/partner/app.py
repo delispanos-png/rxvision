@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 #: Έκδοση ΤΟΥ API — SINGLE SOURCE OF TRUTH. Τη διαβάζουν και το Swagger και το `GET /v1/ping`,
 #: ώστε να μην μπορούν ΠΟΤΕ να διαφωνήσουν. Ο κανόνας είναι στο `create_partner_app()`.
-API_VERSION = "1.1.0"
+API_VERSION = "1.2.0"
 
 DESCRIPTION = """
 Welcome to the **RxVision Partner API**.
@@ -81,6 +81,7 @@ naming the scope.
 | `orders:write` | change order status |
 | `sales:write` | send till sales (OTC, parapharmacy, services) |
 | `sales:read` | read till sales |
+| `gesy_xml:write` | **Cyprus only** — send GHS dispensing XML files |
 
 > 💡 **Ask for the fewest scopes you need.** If your software only updates stock, ask for
 > `stock:read` and `stock:write` and nothing else. A leaked key then does limited damage — and
@@ -214,6 +215,16 @@ version keeps serving while you migrate. So `1.x` will never break your integrat
 
 ## 10. Changelog
 
+### 1.2.0 — 17/11/2026
+**Cyprus (GHS) — automatic dispensing intake.**
+
+*New — Cyprus (`gesy_xml:write`, Cyprus pharmacies only)*
+- `POST /v1/cy/dispensings` — send the dispensing XML the GHS portal produces, as it is: one XML
+  per call, or many in a ZIP. Safe to resend: duplicates are ignored, corrected versions replace the
+  old ones. A service that watches the export folder and posts every new file is a complete client.
+
+Nothing changed for existing endpoints or for pharmacies in Greece.
+
 ### 1.1.0 — 27/09/2026
 **Loyalty and clinical support — nine new endpoints.**
 
@@ -279,6 +290,10 @@ TAGS = [
         "basket or on the pharmacy's own rewards. Most commercial systems have no loyalty "
         "programme — this one is already built, already configured by the pharmacist, and already "
         "accruing. You read a balance and apply a discount."},
+    {"name": "Cyprus — GHS dispensings", "description":
+        "**Cyprus pharmacies only.** Send the GHS portal's dispensing XML files so the pharmacy's "
+        "analytics stay current without anyone uploading files by hand. The patient's ID number is "
+        "never stored."},
     {"name": "Clinical", "description":
         "**PharmaCat** — interaction checks and counter advice. With a linked customer, a basket is "
         "checked against the patient's whole active therapy as recorded in ΗΔΥΚΑ, *including "

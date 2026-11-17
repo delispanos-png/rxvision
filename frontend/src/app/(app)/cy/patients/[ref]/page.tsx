@@ -32,6 +32,10 @@ type Card = {
   adherence: { compliance: number | null; missed: number; open: number; lost_value_cents: number; next_due: string | null };
   medicines: { name: string; kind: string; times: number; value: number; last: string; days_since: number; dosage: string | null }[];
   portal?: { invited: boolean; email: string | null };
+  contact?: { mobile: string | null; email: string | null; marketing_consent: boolean; consent_at: string | null;
+    unsubscribed: boolean; source: string | null; updated_at: string | null };
+  loyalty?: { enrolled: boolean; points?: number; balance_cents?: number; tier?: string } | null;
+  loans?: { id: string; created_at: string; age_days: number | null; items: string[] }[];
   prescriptions: Chain[];
   history: { dispensing_id: string; kind: string; dispensed_at: string; doctor: string | null; instance: number; instances: number;
     totals: Amounts; lines: { description: string; qty_presc: number; qty_disp: number; total: number; pc2: number; days_covered: number | null }[] }[];
@@ -68,6 +72,13 @@ export default function CyPatientCardPage() {
             {c.flags.diabetic && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800">{t("Διαβητικός (από αναλώσιμα)", "Diabetic (from consumables)")}</span>}
           </div>
           <PortalInvite refId={c.patient.ref} portal={c.portal} />
+          <LoyaltyBox refId={c.patient.ref} loyalty={c.loyalty} />
+          {(c.loans?.length ?? 0) > 0 && (
+            <Link href="/cy/loans" className="mt-2 block rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 hover:bg-amber-100">
+              ⚠️ {t("Χρωστά σκευάσματα από προχορήγηση", "Owes products from an advance")}: {c.loans!.flatMap((l) => l.items).join(" · ")}
+              {" "}({t("από", "since")} {fmtDate(c.loans![c.loans!.length - 1].created_at)})
+            </Link>
+          )}
         </div>
         <div className="text-right">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{t("Τελευταία επίσκεψη", "Last visit")}</div>
@@ -102,6 +113,8 @@ export default function CyPatientCardPage() {
         <span>{t("Αξία προς ανάκτηση", "Recoverable value")}: <b className="text-rose-600">{fmtEur(a.lost_value_cents)}</b></span>
         {a.next_due && <span className="ml-auto text-slate-500">{t("Επόμενη επίσκεψη", "Next visit")}: {fmtDate(a.next_due)}</span>}
       </div>
+
+      <ContactBox refId={c.patient.ref} contact={c.contact} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <PanelCard title={t("Εκτελέσεις ανά μήνα (12 μήνες)", "Dispensings per month (12 months)")} className="lg:col-span-2">
@@ -244,5 +257,79 @@ function PortalInvite({ refId, portal }: { refId: string; portal?: { invited: bo
         </div>
       )}
     </div>
+  );
+}
+
+
+const CONTACT_ERR: Record<string, [string, string]> = {
+  bad_mobile: ["Το κινητό δεν είναι έγκυρο. Γράψε 8 ψηφία (π.χ. 99123456) ή με +357.", "Invalid mobile. Enter 8 digits (e.g. 99123456) or with +357."],
+  bad_email: ["Το email δεν είναι έγκυρο.", "The email is not valid."],
+};
+
+/** Στοιχεία επικοινωνίας: το XML ΓεΣΥ δεν τα έχει, τα γράφει ο φαρμακοποιός (ή ο πελάτης από την πύλη).
+ *  Η συγκατάθεση δίνεται ΡΗΤΑ: χωρίς αυτήν ο πελάτης δεν μπαίνει σε καμία καμπάνια. */
+function ContactBox({ refId, contact }: { refId: string; contact?: Card["contact"] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [f, setF] = useState({ mobile: contact?.mobile ? `+${contact.mobile}` : "", email: contact?.email ?? "", marketing_consent: !!contact?.marketing_consent });
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true); setMsg(null);
+    try {
+      await api(`/cy/patients/${encodeURIComponent(refId)}/contact`, { method: "PUT", body: JSON.stringify(f) });
+      setMsg({ ok: true, text: t("Αποθηκεύτηκε.", "Saved.") });
+      qc.invalidateQueries({ queryKey: ["cy", "patient", refId] });
+    } catch (e) {
+      const d = e instanceof ApiError ? (e.problem as { detail?: string })?.detail : "";
+      const m = CONTACT_ERR[d || ""];
+      setMsg({ ok: false, text: m ? t(m[0], m[1]) : t("Δεν αποθηκεύτηκε.", "Not saved.") });
+    } finally { setBusy(false); }
+  }
+  const inp = "rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-800";
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="mb-1 font-semibold">{t("Στοιχεία επικοινωνίας", "Contact details")}</h2>
+      <p className="mb-2 text-xs text-slate-500">{t("Οι συνταγές ΓεΣΥ δεν έχουν τηλέφωνο ή email. Ρώτησε τον πελάτη και γράψ' τα εδώ.", "GHS prescriptions carry no phone or email. Ask the customer and enter them here.")}
+        {contact?.source === "patient" && <> {t("Τα τελευταία τα άλλαξε ο ίδιος από την πύλη.", "Last changed by the customer in the portal.")}</>}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value })} placeholder={t("Κινητό", "Mobile")} inputMode="tel" className={inp} />
+        <input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} placeholder="email" type="email" className={inp} />
+        <label className="inline-flex items-center gap-1.5 text-xs">
+          <input type="checkbox" checked={f.marketing_consent} onChange={(e) => setF({ ...f, marketing_consent: e.target.checked })} />
+          {t("Συμφωνεί να λαμβάνει μηνύματα από το φαρμακείο", "Agrees to receive messages from the pharmacy")}
+        </label>
+        <button type="button" disabled={busy} onClick={save} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">{busy ? "…" : t("Αποθήκευση", "Save")}</button>
+      </div>
+      {contact?.unsubscribed && <p className="mt-2 text-xs text-rose-700">{t("Ο πελάτης ζήτησε να μη λαμβάνει άλλα μηνύματα. Ξανατσεκάρισε τη συγκατάθεση ΜΟΝΟ αν σου το ζητήσει ο ίδιος.", "The customer asked to receive no more messages. Re-tick consent ONLY if they ask you to.")}</p>}
+      {contact?.consent_at && !contact.unsubscribed && <p className="mt-2 text-xs text-slate-400">{t("Συγκατάθεση", "Consent")}: {contact.marketing_consent ? "✓" : "✗"} · {fmtDate(contact.consent_at)}</p>}
+      {msg && <p className={`mt-2 text-xs ${msg.ok ? "text-emerald-700" : "text-rose-700"}`}>{msg.text}</p>}
+    </section>
+  );
+}
+
+/** Πιστότητα: ίδιο πρόγραμμα με την Ελλάδα, πόντοι από τις εκτελέσεις ΓεΣΥ μετά την εγγραφή. */
+function LoyaltyBox({ refId, loyalty }: { refId: string; loyalty?: Card["loyalty"] }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  if (loyalty == null) return null;   // το πρόσθετο πιστότητας δεν είναι ενεργό
+  async function toggle(enroll: boolean) {
+    setBusy(true);
+    try {
+      await api(`/cy/patients/${encodeURIComponent(refId)}/loyalty`, { method: "POST", body: JSON.stringify({ enroll }) });
+      qc.invalidateQueries({ queryKey: ["cy", "patient", refId] });
+    } finally { setBusy(false); }
+  }
+  if (!loyalty.enrolled) {
+    return (
+      <button type="button" disabled={busy} onClick={() => toggle(true)}
+        className="mt-2 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">
+        🎁 {t("Εγγραφή στην πιστότητα", "Enrol in loyalty")}
+      </button>
+    );
+  }
+  return (
+    <p className="mt-2 text-xs text-rose-700">🎁 {t("Μέλος πιστότητας", "Loyalty member")}{loyalty.tier ? ` · ${loyalty.tier}` : ""} · {fmtNum(loyalty.points ?? 0)} {t("πόντοι", "points")} · {fmtEur(loyalty.balance_cents ?? 0)}</p>
   );
 }

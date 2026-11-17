@@ -428,7 +428,8 @@ class PatientAccountRepository:
             if pref:   # καρτέλα που έφτιαξε ΜΟΝΟ η πύλη, χωρίς καμία κίνηση → φεύγει (όπως στην αποσύνδεση)
                 pat = await self.db["patients_anonymized"].find_one(
                     {"tenant_id": tenant_id, "_id": pref}, {"rx_count": 1, "source": 1})
-                if pat and pat.get("source") in SHELL_SOURCES and not int(pat.get("rx_count") or 0):
+                if pat and pat.get("source") in SHELL_SOURCES and not int(pat.get("rx_count") or 0) \
+                        and not await self._loyalty_member(tenant_id, pref):
                     await self.db["patients_anonymized"].delete_one({"tenant_id": tenant_id, "_id": pref})
                     await self.db["patient_contacts"].delete_one({"tenant_id": tenant_id, "_id": pref})
             for c in self._ACCOUNT_COLLS:
@@ -462,7 +463,8 @@ class PatientAccountRepository:
         if pref:
             pat = await self.db["patients_anonymized"].find_one(
                 {"tenant_id": tenant_id, "_id": pref}, {"rx_count": 1, "source": 1})
-            if pat and (pat.get("source") in SHELL_SOURCES) and not int(pat.get("rx_count") or 0):
+            if pat and (pat.get("source") in SHELL_SOURCES) and not int(pat.get("rx_count") or 0) \
+                    and not await self._loyalty_member(tenant_id, pref):
                 await self.db["patients_anonymized"].delete_one({"tenant_id": tenant_id, "_id": pref})
                 await self.db["patient_contacts"].delete_one({"tenant_id": tenant_id, "_id": pref})
         acc = await self.get(account_id)
@@ -627,32 +629,49 @@ class PatientAccountRepository:
              "$setOnInsert": {"created_at": now}}, upsert=True)
         return {"tenant_id": tenant_id, "patient_ref": str(pat["_id"]), "pharmacy_name": name}
 
-    async def link_cy_shell(self, account_id, tenant_id: str, cy_pseudo: str,
-                            full_name: str | None) -> dict | None:
-        """ΚΥΠΡΟΣ: σύνδεσμος λογαριασμού ↔ πελάτη ΓεΣΥ (cy_patients.pseudo_id) σε ΑΥΤΟ το φαρμακείο.
+    async def _loyalty_member(self, tenant_id: str, patient_ref) -> bool:
+        """Η καρτέλα κρατά πόντους πιστότητας → ΔΕΝ σβήνεται με την αποσύνδεση (θα χάνονταν οι πόντοι)."""
+        return bool(await self.db["loyalty_members"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "patient_ref": str(patient_ref)}, {"_id": 1}))
 
-        Η πύλη περιμένει `patient_ref` = ObjectId καρτέλας → φτιάχνουμε «καρτέλα χωρίς κίνηση» (`cy_portal`)
-        που ΜΟΝΟ δείχνει στον κυπριακό πελάτη (`cy_pseudo_id`). Κανένα ΑΜΚΑ, καμία ελληνική ροή."""
-        oid = _oid(account_id)
-        if not oid or not cy_pseudo:
+    async def cy_shell(self, tenant_id: str, cy_pseudo: str, full_name: str | None) -> ObjectId | None:
+        """ΚΥΠΡΟΣ: η «καρτέλα χωρίς κίνηση» (`cy_portal`) που αντιπροσωπεύει τον πελάτη ΓεΣΥ
+        (cy_patients.pseudo_id) στα κοινά κυκλώματα (πύλη, πιστότητα), που περιμένουν ObjectId καρτέλας.
+        ΜΟΝΟ δείχνει στον κυπριακό πελάτη (`cy_pseudo_id`). Κανένα ΑΜΚΑ, καμία ελληνική ροή."""
+        if not cy_pseudo:
             return None
-        now = _now()
         shell_pseudo = f"cy:{cy_pseudo}"
         await self.db["patients_anonymized"].update_one(  # tenant-ok: explicit tenant_id
             {"tenant_id": tenant_id, "pseudo_id": shell_pseudo},
             {"$set": {"full_name": full_name, "cy_pseudo_id": cy_pseudo},
              "$setOnInsert": {"tenant_id": tenant_id, "pseudo_id": shell_pseudo, "rx_count": 0,
                               "rx_value_total": 0, "lifecycle": "new", "source": "cy_portal",
-                              "created_at": now}}, upsert=True)
+                              "created_at": _now()}}, upsert=True)
         pat = await self.db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
             {"tenant_id": tenant_id, "pseudo_id": shell_pseudo}, {"_id": 1})
+        return pat["_id"] if pat else None
+
+    async def cy_shell_id(self, tenant_id: str, cy_pseudo: str) -> ObjectId | None:
+        """Η καρτέλα πύλης του πελάτη ΓεΣΥ, αν υπάρχει (χωρίς δημιουργία)."""
+        pat = await self.db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "pseudo_id": f"cy:{cy_pseudo}"}, {"_id": 1})
+        return pat["_id"] if pat else None
+
+    async def link_cy_shell(self, account_id, tenant_id: str, cy_pseudo: str,
+                            full_name: str | None) -> dict | None:
+        """ΚΥΠΡΟΣ: σύνδεσμος λογαριασμού ↔ πελάτη ΓεΣΥ σε ΑΥΤΟ το φαρμακείο (μέσω της `cy_shell`)."""
+        oid = _oid(account_id)
+        if not oid or not cy_pseudo:
+            return None
+        now = _now()
+        shell = await self.cy_shell(tenant_id, cy_pseudo, full_name)
         t = await self.db["tenants"].find_one({"_id": tenant_id}, {"name": 1, "company": 1})
         name = ((t or {}).get("company") or {}).get("name") or (t or {}).get("name") or tenant_id
         await self.db["patient_links"].update_one(  # tenant-ok: global link doc
             {"account_id": oid, "tenant_id": tenant_id},
-            {"$set": {"patient_ref": pat["_id"], "pharmacy_name": name, "updated_at": now},
+            {"$set": {"patient_ref": shell, "pharmacy_name": name, "updated_at": now},
              "$setOnInsert": {"created_at": now}}, upsert=True)
-        return {"tenant_id": tenant_id, "patient_ref": str(pat["_id"]), "pharmacy_name": name}
+        return {"tenant_id": tenant_id, "patient_ref": str(shell), "pharmacy_name": name}
 
     async def cy_account_for(self, tenant_id: str, cy_pseudo: str) -> dict | None:
         """Ο λογαριασμός πύλης (αν υπάρχει) του κυπριακού πελάτη σε αυτό το φαρμακείο."""
@@ -663,6 +682,16 @@ class PatientAccountRepository:
         link = await self.db["patient_links"].find_one(  # tenant-ok: explicit tenant_id
             {"tenant_id": tenant_id, "patient_ref": shell["_id"]}, {"account_id": 1})
         return await self.get(link["account_id"]) if link else None
+
+    async def cy_members(self, tenant_id: str) -> list[dict]:
+        """Οι πελάτες ΓεΣΥ αυτού του φαρμακείου με λογαριασμό πύλης: [{account_id, cy_pseudo}]."""
+        shells = {r["_id"]: r["cy_pseudo_id"] async for r in self.db["patients_anonymized"].find(  # tenant-ok
+            {"tenant_id": tenant_id, "source": "cy_portal"}, {"cy_pseudo_id": 1})}
+        if not shells:
+            return []
+        return [{"account_id": r["account_id"], "cy_pseudo": shells[r["patient_ref"]]}
+                async for r in self.db["patient_links"].find(  # tenant-ok: explicit tenant_id
+                    {"tenant_id": tenant_id, "patient_ref": {"$in": list(shells)}}, {"account_id": 1, "patient_ref": 1})]
 
     async def cy_pseudo_of(self, tenant_id: str, patient_ref) -> str | None:
         """Από τον σύνδεσμο της πύλης (καρτέλα `cy_portal`) → ο πελάτης ΓεΣΥ (cy_patients.pseudo_id)."""

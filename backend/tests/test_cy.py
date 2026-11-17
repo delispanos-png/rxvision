@@ -138,6 +138,9 @@ def test_synthetic_generator_produces_valid_files():
     assert {p["kind"] for p in parsed} == {"drug", "consumable"}
     assert any(ln["qty_disp"] == 0 for p in parsed for ln in p["lines"])
     assert any(p["closes_prescription"] for p in parsed)
+    # αναλώσιμα κάθε μήνα (φάσεις 1-3 ανά συνταγή): όχι «χαμένοι» διαβητικοί από λάθος ρυθμό του demo
+    cons = [p for p in parsed if p["kind"] == "consumable"]
+    assert cons and all(1 <= p["instance"] <= p["instances"] == 3 for p in cons)
 
 
 # ── εισαγωγή + φραγμός (βάση στη μνήμη) ─────────────────────────────────────
@@ -658,3 +661,323 @@ def test_adherence_counts_missed_phases_only_after_lost_margin():
     assert a["missed"] == 3 and a["compliance"] == 25 and a["lost_value_cents"] == 500
     # μόλις έληξε η 2η φάση, χωρίς να περάσει το περιθώριο → τίποτα δεν χάθηκε ακόμη
     assert chains.adherence([c], date(2026, 9, 10))["missed"] == 0
+
+
+# ── Φάση Α: επικοινωνία, συγκατάθεση, καμπάνιες, ειδοποιήσεις, πιστότητα ─────────────────────
+
+async def test_contact_validation_and_consent_rules(mem):
+    from app.services.cy import contacts
+    await _parity_seed()
+    ref = (await mem["cy_patients"].find_one({}))["pseudo_id"]
+    import pytest as _pt
+    with _pt.raises(ValueError):
+        await contacts.set_contact(CY, ref, {"mobile": "12345"}, source="pharmacist")
+    with _pt.raises(ValueError):
+        await contacts.set_contact(CY, ref, {"email": "όχι-email"}, source="pharmacist")
+    c = await contacts.set_contact(CY, ref, {"mobile": "99 123456", "email": "A@B.cy"}, source="pharmacist")
+    assert c["mobile"] == "35799123456" and c["email"] == "a@b.cy"
+    assert not c.get("marketing_consent"), "η συγκατάθεση ΔΕΝ δίνεται σιωπηρά"
+    c = await contacts.set_contact(CY, ref, {"marketing_consent": True}, source="pharmacist")
+    assert c["marketing_consent"] and c["consent_at"] and c["mobile"] == "35799123456", "μερική αλλαγή κρατά τα υπόλοιπα"
+    assert await contacts.set_contact(CY, "nope", {"email": "x@y.cy"}, source="pharmacist") is None
+
+
+async def test_audience_respects_consent_unsubscribe_and_prefs(mem):
+    from app.services import notify_prefs, unsubscribe
+    from app.services.cy import contacts
+    from app.services.vault_service import vault
+    await _parity_seed()
+    refs = [p["pseudo_id"] for p in await mem["cy_patients"].find({}).to_list(None)]
+    a, b = refs
+    await contacts.set_contact(CY, a, {"mobile": "99111111", "email": "a@x.cy", "marketing_consent": True}, source="pharmacist")
+    await contacts.set_contact(CY, b, {"mobile": "99222222"}, source="pharmacist")   # χωρίς συγκατάθεση
+    aud = await contacts.audience(CY, "sms", "all")
+    assert [r["patient_id"] for r in aud["recipients"]] == [f"cy:{a}"] and aud["excluded"]["no_consent"] == 1
+    assert aud["recipients"][0]["mobile"] == "35799111111"
+    assert (await contacts.audience(CY, "viber", "all"))["recipients"], "ίδιο κινητό για Viber"
+    # ο πελάτης έκλεισε τα SMS από την πύλη → εξαιρείται ΚΑΙ μπλοκάρεται στην αποστολή
+    await mem["cy_patients"].update_one({"pseudo_id": a}, {"$set": {"notify_prefs": {"sms": False}}})
+    assert (await contacts.audience(CY, "sms", "all"))["excluded"]["channel_off"] == 1
+    assert await notify_prefs.allows_patient(CY, f"cy:{a}", "sms", "campaign") is False
+    assert await notify_prefs.allows_patient(CY, f"cy:{a}", "email", "campaign") is True
+    assert await notify_prefs.allows_patient(CY, f"cy:{a}", "sms", "order") is True, "τα απαραίτητα φεύγουν πάντα"
+    # «δεν θέλω άλλα» από τον σύνδεσμο του email
+    import types
+    vault_pepper = vault.tenant_pepper
+    try:
+        vault.tenant_pepper = types.MethodType(lambda self, tid: "p", vault)
+        tok = unsubscribe.make_token(CY, f"cy:{a}")
+        assert (await unsubscribe.describe(tok))["already"] is False
+        assert (await unsubscribe.apply(tok, scope="all"))["ok"]
+        assert (await unsubscribe.describe(tok))["already"] is True
+    finally:
+        vault.tenant_pepper = vault_pepper
+    assert (await contacts.audience(CY, "email", "all"))["recipients"] == []
+    # κοινά από συνταγές = δεδομένα υγείας
+    assert contacts.clinical("late") and contacts.clinical("diabetic") and not contacts.clinical("all")
+
+
+async def test_campaign_engine_uses_cyprus_audience(mem, monkeypatch):
+    from app.services import campaign_engine
+    from app.services.cy import contacts
+    await _parity_seed()
+    ref = (await mem["cy_patients"].find_one({}))["pseudo_id"]
+    await contacts.set_contact(CY, ref, {"email": "a@x.cy", "marketing_consent": True}, source="pharmacist")
+    res = await campaign_engine.create(CY, channel="email", message="Γεια {first}", subject="Θέμα",
+                                       segment="all", value=None, by="u1")
+    assert res["recipients"] == 1
+    r = await mem["comm_recipients"].find_one({})
+    assert r["patient_ref"] == f"cy:{ref}" and r["to"] == "a@x.cy"
+    import pytest as _pt
+    with _pt.raises(ValueError):   # ελληνικό segment σε κυπριακό φαρμακείο → καμία αποστολή
+        await campaign_engine.create(CY, channel="sms", message="x", subject=None, segment="icd", value="E11", by="u1")
+
+
+async def test_router_campaign_blocks_offer_to_clinical_audience(mem, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.v1.routers import cy as cy_router
+    await _parity_seed()
+    import pytest as _pt
+    with _pt.raises(HTTPException) as e:
+        await cy_router.campaign_send(cy_router.CyCampaignIn(channel="sms", segment="late", message="Προσφορά -20%"), _Ctx(CY))
+    assert e.value.detail == "clinical_segment_requires_care_purpose"
+    with _pt.raises(HTTPException):
+        await cy_router.campaign_send(cy_router.CyCampaignIn(channel="sms", segment="all", message="abc"), _Ctx(CY, perms=()))
+
+
+async def test_portal_profile_syncs_to_cyprus_card_and_prefs(mem, monkeypatch):
+    from app.api.v1.routers import cy as cy_router
+    from app.services import notify_prefs
+    from app.services.patient_contact_sync import sync_from_account
+    ref = await _portal_setup(mem, monkeypatch)
+    await cy_router.portal_invite(ref, cy_router.PortalInviteIn(doc_type="NID", doc_number="999001", email="c@d.cy", phone="99887766"), _Ctx(CY))
+    p = await mem["cy_patients"].find_one({"pseudo_id": ref})
+    assert p["contact"]["email"] == "c@d.cy" and p["contact"]["mobile"] == "35799887766"
+    assert not p["contact"].get("marketing_consent"), "η πρόσκληση δεν δίνει συγκατάθεση"
+    acc = await mem["patient_accounts"].find_one({"email": "c@d.cy"})
+    await mem["patient_accounts"].update_one({"_id": acc["_id"]}, {"$set": {"phone": "99000111"}})
+    assert (await sync_from_account(acc["_id"]))["synced"] == 1
+    assert (await mem["cy_patients"].find_one({"pseudo_id": ref}))["contact"]["mobile"] == "35799000111"
+    await notify_prefs.set_for_account(acc["_id"], {"push": False})
+    assert (await mem["cy_patients"].find_one({"pseudo_id": ref}))["notify_prefs"]["push"] is False
+    assert await mem["patient_contacts"].count_documents({}) == 0, "τίποτα στις ελληνικές καρτέλες"
+
+
+async def test_next_step_push_once_per_phase(mem, monkeypatch):
+    from datetime import date
+
+    from app.api.v1.routers import cy as cy_router
+    from app.services import push_service
+    from app.services.cy import reminders
+    from app.services.cy.importer import import_files
+    ref = await _portal_setup(mem, monkeypatch)
+    await import_files(CY, [("b.xml", _rx("RX9", "DX9", "0000999001", "2026-10-20 10:00:00 +0300", 2))], pepper="p")
+    await mem["cy_dispensings"].update_many({"prescription_id": "RX9"}, {"$set": {"patient_ref": ref}})
+    await cy_router.portal_invite(ref, cy_router.PortalInviteIn(doc_type="NID", doc_number="999001", email="c@d.cy"), _Ctx(CY))
+    sent = []
+
+    async def _push(account_id, *, title, body, url="/portal", kind="update"):
+        sent.append((title, body, kind))
+        return 1
+    monkeypatch.setattr(push_service, "send_to_account", _push)
+    # 20/10 + 28 = 17/11 → στις 16/11 είναι 1 ημέρα πριν
+    r = await reminders.next_step_pushes(today=date(2026, 11, 16))
+    assert r["sent"] == 1 and "3/6" in sent[0][1] and "17/11" in sent[0][1] and sent[0][2] == "reminder"
+    again = await reminders.next_step_pushes(today=date(2026, 11, 17))
+    assert again["sent"] == 0, "μία φορά ανά φάση"
+
+
+async def test_loyalty_points_from_cyprus_dispensings(mem, monkeypatch):
+    from app.api.v1.routers import cy as cy_router
+    from app.repositories.loyalty import LoyaltyRepository
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services import auth_service
+    from app.services.cy.importer import import_files
+    await _parity_seed()
+
+    async def _mods(tid):
+        return {"loyalty": "enabled"}
+    monkeypatch.setattr(auth_service, "resolve_tenant_modules", _mods)
+    monkeypatch.setattr(auth_service, "tenant_has", lambda mods, m: mods.get(m) == "enabled")
+    ref = None
+    for p in await mem["cy_patients"].find({}).to_list(None):
+        if await mem["cy_dispensings"].count_documents({"patient_ref": p["pseudo_id"]}) == 3:
+            ref = p["pseudo_id"]
+    res = await cy_router.patient_loyalty(ref, cy_router.LoyaltyIn(enroll=True), _Ctx(CY))
+    assert res["loyalty"]["enrolled"] and res["loyalty"]["points"] == 0, "οι παλιές εκτελέσεις δεν μετράνε"
+    # νέα εκτέλεση ΜΕΤΑ την εγγραφή → πόντοι
+    from datetime import datetime, timedelta, timezone
+    now = (datetime.now(timezone.utc) + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S +0000")
+    await import_files(CY, [("n.xml", _rx("P1", "E9", "N-A", now, 4))], pepper="p")
+    shell = await PatientAccountRepository().cy_shell_id(CY, ref)
+    m = await LoyaltyRepository(tenant_id=CY).member(str(shell))
+    cfg = await LoyaltyRepository(tenant_id=CY).config()
+    assert m["refills"] == 1 and m["points"] == cfg["points_per_refill"]
+    assert m["compliance"] is not None
+    assert await mem["executions"].count_documents({}) == 0
+    # η αποσύνδεση από την πύλη ΔΕΝ σβήνει καρτέλα που κρατά πόντους
+    assert await PatientAccountRepository()._loyalty_member(CY, shell)
+
+
+async def test_gdpr_erase_removes_contact(mem):
+    from app.services.cy import contacts, gdpr
+    await _parity_seed()
+    ref = (await mem["cy_patients"].find_one({}))["pseudo_id"]
+    await contacts.set_contact(CY, ref, {"email": "a@x.cy", "marketing_consent": True}, source="pharmacist")
+    await gdpr.erase(CY, f"cy:{ref}")
+    p = await mem["cy_patients"].find_one({"pseudo_id": ref})
+    assert "contact" not in p and p["erased"]
+    aud = await contacts.audience(CY, "email", "all")
+    assert aud["recipients"] == [] and aud["candidates"] == 1, "ο διαγραμμένος δεν είναι καν υποψήφιος"
+
+
+# ── Φάση Β: αυτόματη λήψη XML από την υπηρεσία των Windows (Partner API) ─────────────────────
+
+def _req(body: bytes, ctype: str = "application/xml"):
+    from starlette.requests import Request
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+    return Request({"type": "http", "method": "POST", "path": "/v1/cy/dispensings",
+                    "headers": [(b"content-type", ctype.encode())]}, receive)
+
+
+async def test_partner_cy_dispensings_imports_and_is_idempotent(mem, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.partner import v1
+    from app.api.partner.deps import PartnerContext
+    from app.services.cy import gate
+    from app.services.vault_service import vault
+    monkeypatch.setattr(vault, "tenant_pepper", lambda tid: "p")
+    await gate.set_cy_enabled(True)
+    ctx = PartnerContext(tenant_id=CY, key_id="k", key_name="win", scopes=["gesy_xml:write"])
+    r = await v1.cy_dispensings(_req(DRUG_XML.encode()), ctx)
+    assert r["imported"] == 1 and r["failed"] == 0
+    again = await v1.cy_dispensings(_req(DRUG_XML.encode()), ctx)
+    assert again["imported"] == 0 and again["duplicates"] == 1, "η επανάληψη είναι ασφαλής"
+    bad = await v1.cy_dispensings(_req(b"<Dispensing>"), ctx)
+    assert bad["failed"] == 1 and bad["errors"]
+    import pytest as _pt
+    with _pt.raises(HTTPException) as e:   # ελληνικό φαρμακείο → 404, τίποτα δεν γράφεται
+        await v1.cy_dispensings(_req(DRUG_XML.encode()), PartnerContext(tenant_id=GR, key_id="k", key_name="x"))
+    assert e.value.status_code == 404
+    with _pt.raises(HTTPException) as e:
+        await v1.cy_dispensings(_req(b"  "), ctx)
+    assert e.value.status_code == 400
+    assert await mem["cy_dispensings"].count_documents({"tenant_id": GR}) == 0
+
+
+def test_api_key_scopes_are_per_country():
+    from app.services import api_keys
+    assert "gesy_xml:write" in api_keys.scopes_for("CY") and "gesy_xml:write" not in api_keys.scopes_for("GR")
+    assert "patients:read" not in api_keys.scopes_for("CY"), "χωρίς ΑΜΚΑ δεν υπάρχει σύνδεση πελάτη"
+    assert set(api_keys.scopes_for("GR")) | {"gesy_xml:write"} == set(api_keys.SCOPES)
+
+
+# ── Φάση Γ: κανόνες αλυσίδων από το adminpanel (χωρίς νέα έκδοση) ──────────────────────────
+
+async def test_chain_rules_are_configurable_and_bounded(mem):
+    from datetime import date
+
+    from app.services.cy import chains, gate
+    from app.services.cy.importer import import_files
+    await import_files(CY, [("a", _rx("RZ", "DZ", "N-Z", "2026-09-01 10:00:00 +0300", 2))], pepper="p")
+    today = date(2026, 10, 20)   # αναμενόταν 29/09 → 21 ημέρες καθυστέρηση
+    assert (await chains.chains(CY, today=today))[0]["status"] == "lost"
+    await gate.set_cy_rules({"lost_after_days": 30})
+    c = (await chains.chains(CY, today=today))[0]
+    assert c["status"] == "late" and c["lost_after_days"] == 30
+    assert chains.adherence([c], today)["missed"] == 0, "η συμμόρφωση ακολουθεί το ίδιο όριο"
+    import pytest as _pt
+    with _pt.raises(ValueError):
+        await gate.set_cy_rules({"lost_after_days": 500})
+    with _pt.raises(ValueError):
+        await gate.set_cy_rules({"bogus": 3})
+    assert (await gate.cy_rules())["lost_after_days"] == 30, "λάθος τιμή → τίποτα δεν αποθηκεύεται"
+
+
+# ── Φάση Δ: Προχορηγήσεις (δανεικά) Κύπρου ─────────────────────────────────────────────────
+
+def test_gtin13_equivalence():
+    from app.services.cy.loans import gtin13
+    assert gtin13("05290000000001") == gtin13("5290000000001") == "5290000000001"
+    assert gtin13("") is None and gtin13("abc") is None
+
+
+async def test_cy_loans_suggest_but_never_auto_clear(mem):
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.cy import loans
+    from app.services.cy.importer import import_files
+    await _parity_seed()
+    pats = await mem["cy_patients"].find({}).to_list(None)
+    a, b = pats[0]["pseudo_id"], pats[1]["pseudo_id"]
+    line = (await mem["cy_dispensings"].find_one({"patient_ref": a}))["lines"][0]
+    g = loans.gtin13(line.get("barcode") or (line.get("emvs") or [{}])[0].get("gtin"))
+    import pytest as _pt
+    with _pt.raises(ValueError):    # πελάτης ΠΑΝΤΑ από τη λίστα
+        await loans.create(CY, patient_ref="nobody", items=[{"gtin": g}])
+    r = await loans.create(CY, patient_ref=a, items=[{"gtin": g, "qty": 1}], by="u1")
+    assert (await loans.listing(CY))[0]["items"][0]["name"], "όνομα από τα XML"
+    assert await loans.suggestions(CY) == [], "καμία εκτέλεση μετά το δανεικό"
+    # εκτέλεση του ΙΔΙΟΥ πελάτη μετά → πρόταση· ΑΛΛΟΥ πελάτη → τίποτα
+    who = (await mem["cy_patients"].find_one({"pseudo_id": a}))
+    nid = "N-A" if (await mem["cy_dispensings"].count_documents({"patient_ref": a})) == 3 else "N-B"
+    later = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S +0000")
+    await import_files(CY, [("x", _rx("PX", "EX", nid, later, 1))], pepper="p")
+    s = await loans.suggestions(CY)
+    assert len(s) == 1 and s[0]["loan_id"] == r["id"] and s[0]["dispensing_id"] == "EX", (who, s)
+    ln = (await loans.listing(CY))[0]
+    assert ln["items"][0]["status"] == "open", "ΠΟΤΕ αυτόματη ξεχρέωση"
+    assert (await loans.set_item(CY, r["id"], 0, cleared=True, dispensing_id="EX", by="u1"))["status"] == "closed"
+    assert await loans.suggestions(CY) == []
+    assert (await loans.listing(CY, status="closed"))[0]["open_items"] == 0
+    assert b != a
+
+
+async def test_reorder_expected_missed_and_stock(mem):
+    from datetime import date
+
+    from app.services.cy import insights
+    from app.services.cy.importer import import_files
+    await import_files(CY, [("a", _rx("RR", "DR", "N-R", "2026-11-01 10:00:00 +0200", 2))], pepper="p")
+    line = (await mem["cy_dispensings"].find_one({"dispensing_id": "DR"}))["lines"][0]
+    r = await insights.reorder(CY, horizon=14, today=date(2026, 11, 20))   # αναμένεται 29/11 → μέσα
+    it = next(i for i in r["items"] if i["key"] == (line.get("barcode") or line.get("code")))
+    assert it["expected"] == line["qty_presc"] and it["patients"] == 1 and it["stock"] is None
+    await mem["pharmacy_products"].insert_one({"tenant_id": CY, "barcode": line["barcode"], "stock_qty": 50})
+    it = next(i for i in (await insights.reorder(CY, today=date(2026, 11, 20)))["items"] if i["barcode"] == line["barcode"])
+    assert it["stock"] == 50 and it["suggested"] == 0
+    short = await insights.reorder(CY, horizon=3, today=date(2026, 11, 20))   # 29/11 είναι σε 9 ημέρες → εκτός
+    assert all(i["expected"] == 0 for i in short["items"])
+
+
+async def test_profitability_net_of_vat_and_coverage(mem):
+    from datetime import date
+
+    from app.services.cy import analytics
+    await _parity_seed()
+    r = await analytics.profitability(CY, date(2026, 1, 1), date(2027, 1, 1))
+    assert r["totals"]["coverage_pct"] == 0 and r["totals"]["profit"] == 0 and r["missing_cost"] == len(r["items"])
+    it = r["items"][0]
+    assert it["revenue_net"] == round(it["revenue"] / 1.05), "φάρμακα: ΦΠΑ Κύπρου 5%"
+    await mem["pharmacy_products"].insert_one({"tenant_id": CY, "barcode": it["barcode"], "wholesale_cents": 100})
+    r2 = await analytics.profitability(CY, date(2026, 1, 1), date(2027, 1, 1))
+    it2 = next(i for i in r2["items"] if i["barcode"] == it["barcode"])
+    assert it2["cost"] == 100 * it2["units"] and it2["profit"] == it2["revenue_net"] - it2["cost"]
+    assert 0 < r2["totals"]["coverage_pct"] <= 100
+
+
+async def test_release_notes_are_per_country(mem):
+    from app.services import release_notes as rn
+    await mem["release_notes"].insert_one({"_id": "1.70.0", "vsort": "0001.0070.0000", "published": True,
+                                            "items": [{"title": "Από την ΗΔΥΚΑ"}]})   # παλιά, χωρίς χώρα
+    await rn.upsert("1.72.0", title="ΓεΣΥ", items=[{"title": "Καμπάνιες"}], published=True, country="CY")
+    await rn.upsert("1.73.0", title="Όλοι", items=[{"title": "Connect"}], published=True, country="ALL")
+    gr = [i["version"] for i in (await rn.for_tenant(GR))["items"]]
+    cy = [i["version"] for i in (await rn.for_tenant(CY))["items"]]
+    assert gr == ["1.73.0", "1.70.0"], "ο Έλληνας δεν βλέπει κυπριακές σημειώσεις"
+    assert cy == ["1.73.0", "1.72.0"], "ο Κύπριος δεν βλέπει τις παλιές ελληνικές (ΗΔΥΚΑ)"
+    assert (await rn.mark_seen(CY))["last_version"] == "1.73.0"

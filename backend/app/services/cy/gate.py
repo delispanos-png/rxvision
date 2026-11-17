@@ -22,6 +22,36 @@ async def cy_enabled() -> bool:
     return bool((doc or {}).get("enabled"))
 
 
+#: Οι κανόνες των αλυσίδων ΓεΣΥ. ΥΠΟΘΕΣΕΙΣ μέχρι τον πιλότο → αλλάζουν από το adminpanel χωρίς
+#: νέα έκδοση. Όρια: ό,τι έξω από αυτά είναι σχεδόν σίγουρα λάθος πληκτρολόγησης.
+RULE_DEFAULTS = {"drug_interval_days": 28, "consumable_interval_days": 30, "lost_after_days": 14, "soon_days": 7}
+RULE_BOUNDS = {"drug_interval_days": (7, 120), "consumable_interval_days": (7, 120),
+               "lost_after_days": (1, 90), "soon_days": (1, 30)}
+
+
+async def cy_rules() -> dict[str, int]:
+    doc = await shared_db()["platform_settings"].find_one({"_id": SETTINGS_ID}, {"rules": 1})
+    saved = (doc or {}).get("rules") or {}
+    return {k: int(saved.get(k, v)) for k, v in RULE_DEFAULTS.items()}
+
+
+async def set_cy_rules(patch: dict) -> dict[str, int]:
+    """Αλλαγή κανόνων. Άγνωστο κλειδί ή τιμή εκτός ορίων → ValueError (καμία μερική αποθήκευση)."""
+    from datetime import datetime, timezone
+    cur = await cy_rules()
+    for k, v in (patch or {}).items():
+        if k not in RULE_DEFAULTS:
+            raise ValueError(f"unknown_rule:{k}")
+        lo, hi = RULE_BOUNDS[k]
+        if not isinstance(v, int) or not lo <= v <= hi:
+            raise ValueError(f"out_of_range:{k}:{lo}-{hi}")
+        cur[k] = v
+    await shared_db()["platform_settings"].update_one(
+        {"_id": SETTINGS_ID}, {"$set": {"rules": cur, "rules_updated_at": datetime.now(tz=timezone.utc)}},
+        upsert=True)
+    return cur
+
+
 async def set_cy_enabled(enabled: bool) -> bool:
     from datetime import datetime, timezone
     await shared_db()["platform_settings"].update_one(

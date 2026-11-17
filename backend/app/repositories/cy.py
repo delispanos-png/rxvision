@@ -102,3 +102,9 @@ class CyDispensingRepository(BaseRepository):
             "amounts": {k: t.get(k, 0) for k in ("hio", "beneficiary", "pc2", "total")},
             "first": t.get("first"), "last": t.get("last"), "last_import": t.get("last_import"),
         }
+
+
+class CyLoanRepository(BaseRepository):
+    """Προχορηγήσεις (δανεικά) Κύπρου: σκευάσματα που δόθηκαν ΠΡΙΝ από την εκτέλεση ΓεΣΥ.
+    Ξεχωριστή συλλογή από την ελληνική (`advance_dispensings`), που στηρίζεται σε ΕΟΦ/ΗΔΥΚΑ."""
+    collection_name = "cy_loans"

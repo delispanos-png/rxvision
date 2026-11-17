@@ -1,5 +1,6 @@
 "use client";
 
+import { useCountry } from "@/lib/cy";
 import { useState, useEffect, useRef } from "react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -608,14 +609,18 @@ function ServicesTab() {
 
 export default function PortalAdminPage() {
   const t = useT();
+  // Κύπρος: χωρίς «Πελάτες πύλης» (πρόσκληση/QR με ΑΜΚΑ) και «Συνταγές» (ΗΔΥΚΑ). Ο Κύπριος πελάτης
+  // προσκαλείται από την Καρτέλα πελάτη ΓεΣΥ· εδώ μένουν τα αιτήματα που στέλνει από την πύλη.
+  const cy = useCountry() === "CY";
   const [tab, setTab] = useState("customers");
-  const TABS: [string, string, typeof MessageSquare][] = [
+  const TABS: [string, string, typeof MessageSquare][] = ([
     ["customers", t("Πελάτες πύλης", "Portal customers"), Heart],
     ["rx", t("Συνταγές", "Prescriptions"), FileText],
     ["availability", t("Διαθεσιμότητα", "Availability"), MessageSquare],
     ["appointments", t("Ραντεβού", "Appointments"), CalendarClock],
     ["services", t("Υπηρεσίες", "Services"), Stethoscope],
-  ];
+  ] as [string, string, typeof MessageSquare][]).filter(([k]) => !cy || !["customers", "rx"].includes(k));
+  useEffect(() => { if (cy && ["customers", "rx"].includes(tab)) setTab("availability"); }, [cy, tab]);
   // Η καρτέλα οδηγείται ΚΑΙ από το URL hash → κάθε tab = αυτόνομο entry στο μενού «Πύλη πελατών».
   useEffect(() => {
     const valid = TABS.map((x) => x[0]);
@@ -634,8 +639,8 @@ export default function PortalAdminPage() {
           <p className="text-sm text-slate-500">{t("Επίλεξε ενότητα από το μενού «Πύλη πελατών» αριστερά.", "Pick a section from the «Customer Portal» menu on the left.")}</p>
         </div>
       </div>
-      {tab === "customers" && <PortalCustomersTab />}
-      {tab === "rx" && <RxRequestsTab />}
+      {tab === "customers" && !cy && <PortalCustomersTab />}
+      {tab === "rx" && !cy && <RxRequestsTab />}
       {tab === "availability" && <AvailabilityTab />}
       {tab === "appointments" && <AppointmentsTab />}
       {tab === "services" && <ServicesTab />}

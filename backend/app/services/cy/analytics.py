@@ -278,3 +278,53 @@ async def doctor(tenant_id: str, doctor_id: str, *, today: date | None = None) -
         "items": [{"key": r["_id"], "name": r.get("name"), "times": r["times"], "value": r["value"]}
                   for r in items],
     }
+
+
+# ── Κερδοφορία (χονδρική από την Αποθήκη) ─────────────────────────────────────
+
+CY_VAT = {"drug": 5.0, "consumable": 19.0}   # Κύπρος: φάρμακα 5%, αναλώσιμα 19% (όπως το PharmacyOne)
+
+
+async def profitability(tenant_id: str, date_from: date | None, date_to: date | None) -> dict[str, Any]:
+    """Κέρδος = έσοδα ΧΩΡΙΣ ΦΠΑ − χονδρική (ίδιος κανόνας με την Ελλάδα, services/vat.py).
+
+    Έσοδα = σύνολο γραμμής (ΟΑΥ + πελάτης). Χονδρική = `wholesale_cents` της Αποθήκης × τεμάχια,
+    ταίριασμα με barcode. Το XML ΓεΣΥ δεν έχει χονδρική: όπου η Αποθήκη δεν την ξέρει, το είδος
+    μετρά στα έσοδα αλλά ΟΧΙ στο κέρδος, και το λέμε («κάλυψη»). Ποτέ εκτίμηση."""
+    from app.core.db import shared_db
+    from app.services import vat
+    rows = await CyDispensingRepository(tenant_id=tenant_id).aggregate([
+        *([{"$match": window(date_from, date_to)}] if (date_from or date_to) else []),
+        {"$unwind": "$lines"}, {"$match": {"lines.qty_disp": {"$gt": 0}}},
+        {"$group": {"_id": {"$ifNull": ["$lines.barcode", "$lines.code"]},
+                    "barcode": {"$last": "$lines.barcode"}, "name": {"$last": "$lines.description"},
+                    "kind": {"$last": "$lines.kind"}, "units": {"$sum": "$lines.qty_disp"},
+                    "revenue": {"$sum": "$lines.amounts.total"}, "times": {"$sum": 1}}}])
+    bcs = [r["barcode"] for r in rows if r.get("barcode")]
+    wh: dict[str, dict] = {}
+    if bcs:
+        async for p in shared_db()["pharmacy_products"].find(  # tenant-ok: tenant_id στο φίλτρο
+                {"tenant_id": tenant_id, "barcode": {"$in": bcs}}, {"barcode": 1, "wholesale_cents": 1, "vat_rate": 1}):
+            wh[p["barcode"]] = p
+    items, tot = [], {"revenue": 0, "revenue_net": 0, "covered_revenue_net": 0, "cost": 0, "profit": 0}
+    for r in rows:
+        p = wh.get(r.get("barcode") or "") or {}
+        pct = float(p["vat_rate"]) if p.get("vat_rate") is not None else CY_VAT.get(r.get("kind"), 5.0)
+        net = round(vat.net(r["revenue"], pct))
+        cost = int(p.get("wholesale_cents") or 0) * r["units"] if p.get("wholesale_cents") else None
+        profit = net - cost if cost is not None else None
+        items.append({"key": r["_id"], "barcode": r.get("barcode"), "name": r.get("name"), "kind": r.get("kind"),
+                      "units": r["units"], "times": r["times"], "revenue": r["revenue"], "revenue_net": net,
+                      "vat_pct": pct, "cost": cost, "profit": profit,
+                      "margin_pct": round(100 * profit / net, 1) if profit is not None and net else None})
+        tot["revenue"] += r["revenue"]
+        tot["revenue_net"] += net
+        if cost is not None:
+            tot["covered_revenue_net"] += net
+            tot["cost"] += cost
+            tot["profit"] += profit
+    items.sort(key=lambda i: (i["profit"] is None, -(i["profit"] or 0), -i["revenue"]))
+    return {"totals": {**tot,
+                       "margin_pct": round(100 * tot["profit"] / tot["covered_revenue_net"], 1) if tot["covered_revenue_net"] else None,
+                       "coverage_pct": round(100 * tot["covered_revenue_net"] / tot["revenue_net"]) if tot["revenue_net"] else 0},
+            "items": items, "missing_cost": sum(1 for i in items if i["cost"] is None)}

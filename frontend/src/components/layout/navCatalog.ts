@@ -97,6 +97,9 @@ export const NAV_GROUPS: Group[] = [
       { href: "/eshop-fees", label: "Προμήθειες συναλλαγών", en: "Transaction fees" },
     ] },
   ] },
+  { title: "Παραγγελία", en: "Ordering", icon: PackageSearch, items: [
+    { label: "Πρόταση παραγγελίας", en: "Reorder suggestion", icon: PackageSearch, href: "/cy/reorder", tip: "Τι θα ζητηθεί τις επόμενες ημέρες από τις ανοιχτές συνταγές, τι έλειψε, και τι απόθεμα έχεις.", tip_en: "What will be asked for in the coming days from open prescriptions, what ran out, and your stock." },
+  ] },
   { title: "Διαχείριση φαρμακείου", en: "Pharmacy management", icon: Building2, items: [
     { section: EXEC, label: "Dashboard", en: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
     // Τα ΙΔΙΑ modules με πριν: όποιος έβλεπε τη λίστα ασθενών δεν τη χάνει με την αναδιάταξη.
@@ -161,7 +164,13 @@ export const NAV_GROUPS: Group[] = [
 const SHARED_FOR_CY = new Set(["Connect", "Ρυθμίσεις", "Βοήθεια"]);
 /** Μεμονωμένες επιλογές ελληνικών ομάδων που δουλεύουν ΑΥΤΟΥΣΙΕΣ στην Κύπρο (δεν θέλουν δεδομένα ΗΔΥΚΑ).
  *  Έλεγχος 17/11/2026: κουπόνια, e-shop (προσφορές/κατηγορίες/προμήθειες), αποθήκη (ΦΠΑ ανά χώρα). */
-const CY_PICK = new Set(["/marketing/coupons", "/eshop-offers", "/eshop-categories", "/eshop-fees", "/warehouse"]);
+const CY_PICK = new Set(["/marketing/coupons", "/eshop-offers", "/eshop-categories", "/eshop-fees", "/warehouse",
+  // e-shop: οι Κύπριοι πελάτες της πύλης παραγγέλνουν → το φαρμακείο πρέπει να βλέπει τις παραγγελίες
+  "/orders-delivery#orders", "/orders-delivery#done", "/orders-delivery#settings",
+  // πύλη & πιστότητα (17/11/2026): ΧΩΡΙΣ «Πελάτες πύλης»/«Συνταγές» (ΑΜΚΑ/ΗΔΥΚΑ)· η πρόσκληση
+  // και η εγγραφή στην πιστότητα γίνονται από την Καρτέλα πελάτη ΓεΣΥ
+  "/portal-admin#availability", "/portal-admin#appointments", "/portal-admin#services",
+  "/loyalty#members", "/loyalty#redemptions", "/loyalty#rewards", "/loyalty#settings"]);
 const pickFrom = (titles: string[]): Node[] => NAV_GROUPS
   .filter((g) => titles.includes(g.title))
   .flatMap((g) => g.items.flatMap((n): Node[] => {
@@ -174,6 +183,7 @@ export const CY_NAV_GROUPS: Group[] = [
   { title: "Εξυπηρέτηση πάγκου", en: "Counter service", icon: Store, items: [
     { label: "Ανοιχτές συνταγές", en: "Open prescriptions", icon: CalendarClock, href: "/cy/open", tip: "Ποιος πρέπει να έρθει για την επόμενη φάση της συνταγής του και πότε.", tip_en: "Who should come for the next step of their prescription, and when." },
     { label: "Χαμένοι πελάτες", en: "Lost customers", icon: UserPlus, href: "/cy/lost", tip: "Πελάτες που δεν ήρθαν για συνταγή που έπρεπε να συνεχιστεί, και πόσο αξίζουν.", tip_en: "Customers who did not come back for a prescription that should have continued, and what they are worth." },
+    { label: "Προχορηγήσεις", en: "Advance dispensings", icon: ArrowRightLeft, href: "/cy/loans", module: "advance_dispensing", tip: "Σκευάσματα που δίνεις πριν εκτελεστεί η συνταγή ΓεΣΥ, και η ξεχρέωσή τους όταν εκτελεστεί.", tip_en: "Products you give before the GHS prescription is dispensed, and clearing them once it is." },
     { label: "Αναλώσιμα & διαβητικοί", en: "Consumables & diabetics", icon: Activity, href: "/cy/consumables", tip: "Ποιοι παίρνουν ταινίες/σκαρφιστήρες και ποιοι άργησαν για τα επόμενα.", tip_en: "Who receives strips/lancets and who is late for the next supply." },
   ] },
   { title: "Έλεγχος συνταγών", en: "Prescription control", icon: ShieldCheck, items: [
@@ -187,11 +197,16 @@ export const CY_NAV_GROUPS: Group[] = [
     { section: EXEC, label: "Dashboard", en: "Dashboard", icon: LayoutDashboard, href: "/cy", tip: "Η εικόνα του φαρμακείου: εκτελέσεις, αξία, ΟΑΥ, πελάτες, ώρες αιχμής, με σύγκριση με πέρσι.", tip_en: "Your pharmacy at a glance: dispensings, value, HIO, customers, peak hours, compared with last year." },
     { section: EXEC, label: "Πελάτες", en: "Customers", icon: Users, href: "/cy/patients", tip: "Αναζήτηση πελάτη και άνοιγμα της καρτέλας του.", tip_en: "Find a customer and open their card." },
     { section: EXEC, label: "Ιατροί", en: "Doctors", icon: Stethoscope, href: "/cy/doctors", tip: "Ποιοι γιατροί συνταγογραφούν στους πελάτες σου και τι αξία φέρνουν.", tip_en: "Which doctors prescribe for your customers and what value they bring." },
+    { section: EXEC, label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/cy/profitability", module: "profitability", tip: "Κέρδος ανά σκεύασμα: έσοδα χωρίς ΦΠΑ μείον χονδρική από την Αποθήκη.", tip_en: "Profit per product: revenue excl. VAT minus wholesale from the Warehouse." },
     { section: EXEC, label: "Υπάλληλοι", en: "Staff", icon: Users, href: "/cy/staff", tip: "Εκτελέσεις ανά χρήστη της πύλης ΓεΣΥ.", tip_en: "Dispensings per GHS portal user." },
     ...pickFrom(["Διαχείριση φαρμακείου"]),
   ] },
-  { title: "Ηλεκτρονικό κατάστημα", en: "e-shop", icon: ShoppingBag,
-    items: pickFrom(["Ηλεκτρονικό κατάστημα", "Marketing"]) },
+  { title: "Marketing", en: "Marketing", icon: Megaphone, items: [
+    { label: "Καμπάνιες", en: "Campaigns", icon: Mail, href: "/cy/campaigns", tip: "Στείλε SMS, Viber, email ή ειδοποίηση πύλης σε μια ομάδα πελατών, μόνο σε όσους έδωσαν συγκατάθεση.", tip_en: "Send SMS, Viber, email or a portal notification to a group of customers, only to those who consented." },
+    ...pickFrom(["Marketing"]),
+  ] },
+  { title: "Πύλη πελατών & Πιστότητα", en: "Portal & Loyalty", icon: Heart, items: pickFrom(["Πύλη πελατών & Πιστότητα"]) },
+  { title: "Ηλεκτρονικό κατάστημα", en: "e-shop", icon: ShoppingBag, items: pickFrom(["Ηλεκτρονικό κατάστημα"]) },
   ...NAV_GROUPS.filter((g) => SHARED_FOR_CY.has(g.title)).map((g) => g.title === "Βοήθεια"
     // ο «Οδηγός δεικτών» εξηγεί ελληνικούς δείκτες (ΕΟΠΥΥ) → όχι στην Κύπρο
     ? { ...g, items: g.items.filter((n) => n.href !== "/guide") }

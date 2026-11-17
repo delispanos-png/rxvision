@@ -319,3 +319,55 @@ async def recall(tenant_id: str, *, lot: str, gtin: str | None = None) -> dict[s
                     "doctor": (r.get("doctor") or {}).get("name")})
     return {"lot": lot, "gtin": gtin, "patients": len({i["patient_ref"] for i in items}),
             "packs": sum(i["packs"] for i in items), "items": items}
+
+
+# ── Πρόταση παραγγελίας: ό,τι θα ζητηθεί + ό,τι έλειψε − απόθεμα ───────────────────────────
+
+async def reorder(tenant_id: str, *, horizon: int = 14, today: date | None = None) -> dict[str, Any]:
+    """Τι να παραγγείλω για τις επόμενες `horizon` ημέρες.
+
+    - **Αναμένεται:** ανοιχτές συνταγές (όχι «χαμένες») με επόμενη φάση μέσα στο διάστημα· ποσότητα =
+      ό,τι γράφτηκε στην τελευταία εκτέλεση (QtyPresc). Ίδιος ορισμός αλυσίδων με τις άλλες οθόνες.
+    - **Έλειψε:** γραμμές με QtyDisp 0 τις τελευταίες 30 ημέρες (πιθανή έλλειψη αποθέματος).
+    - **Απόθεμα:** από την Αποθήκη, αν το είδος υπάρχει εκεί με το ίδιο barcode.
+    Πρόταση = αναμενόμενα − απόθεμα (ποτέ αρνητικό). Δεν παραγγέλνει τίποτα μόνο του."""
+    from app.core.db import shared_db
+    today = today or datetime.now(tz=ch.TZ).date()
+    cs = [c for c in await ch.chains(tenant_id, today=today)
+          if c["status"] in ("soon", "upcoming", "late") and c["days_to_due"] <= horizon]
+    repo = CyDispensingRepository(tenant_id=tenant_id)
+    need: dict[str, dict[str, Any]] = {}
+
+    def _slot(ln: dict) -> dict[str, Any]:
+        k = ln.get("barcode") or ln.get("code") or ln.get("description")
+        return need.setdefault(k, {"key": k, "barcode": ln.get("barcode"), "description": ln.get("description"),
+                                   "kind": ln.get("kind"), "expected": 0, "patients": set(), "missed_30d": 0})
+    if cs:
+        last = await repo.aggregate([
+            {"$match": {"prescription_id": {"$in": [c["prescription_id"] for c in cs]}}},
+            {"$sort": {"dispensed_at": -1}},
+            {"$group": {"_id": "$prescription_id", "lines": {"$first": "$lines"}, "patient_ref": {"$first": "$patient_ref"}}}])
+        for r in last:
+            for ln in r.get("lines") or []:
+                s = _slot(ln)
+                s["expected"] += int(ln.get("qty_presc") or 0)
+                s["patients"].add(r.get("patient_ref"))
+    since = datetime.combine(today - timedelta(days=30), datetime.min.time(), tzinfo=ch.TZ)
+    for r in await repo.aggregate([{"$match": {"dispensed_at": {"$gte": since}}}, {"$unwind": "$lines"},
+                                   {"$match": {"lines.qty_disp": 0}}, {"$project": {"_id": 0, "l": "$lines"}}]):
+        _slot(r["l"])["missed_30d"] += int(r["l"].get("qty_presc") or 0)
+    barcodes = [v["barcode"] for v in need.values() if v["barcode"]]
+    stock = {}
+    if barcodes:
+        async for p in shared_db()["pharmacy_products"].find(  # tenant-ok: tenant_id στο φίλτρο
+                {"tenant_id": tenant_id, "barcode": {"$in": barcodes}}, {"barcode": 1, "stock_qty": 1}):
+            stock[p["barcode"]] = p.get("stock_qty")
+    items = []
+    for v in need.values():
+        st = stock.get(v["barcode"]) if v["barcode"] else None
+        items.append({**v, "patients": len([x for x in v["patients"] if x]), "stock": st,
+                      "suggested": max(0, v["expected"] - (st or 0)) if st is not None else v["expected"]})
+    items.sort(key=lambda x: (-x["suggested"], -x["missed_30d"], x["description"] or ""))
+    return {"horizon_days": horizon, "items": items,
+            "summary": {"products": len(items), "units": sum(i["suggested"] for i in items),
+                        "with_stock_info": sum(1 for i in items if i["stock"] is not None)}}

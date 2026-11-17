@@ -87,7 +87,11 @@ async def _propagate(account_oid, prefs: dict) -> None:
     """Αντιγραφή στις καρτέλες `patient_contacts` κάθε φαρμακείου με το ίδιο ΑΜΚΑ, ώστε ο έλεγχος
     κατά την αποστολή να γίνεται τοπικά (χωρίς αντίστροφη αναζήτηση ψευδώνυμο→λογαριασμό)."""
     db = shared_db()
-    acc = await db["patient_accounts"].find_one({"_id": account_oid}, {"amka": 1})  # tenant-ok
+    acc = await db["patient_accounts"].find_one({"_id": account_oid})  # tenant-ok
+    if (acc or {}).get("country") == "CY":   # Κύπρος: χωρίς ΑΜΚΑ, μέσω του συνδέσμου της πύλης
+        from app.services.cy import contacts as cy_contacts
+        await cy_contacts.sync_from_account({**acc, "notify_prefs": prefs})
+        return
     amka = str((acc or {}).get("amka") or "").strip()
     if not amka:
         return
@@ -113,6 +117,9 @@ async def allows_patient(tenant_id: str, patient_ref, channel: str, kind: str = 
     """
     if is_essential(kind):
         return True
+    if str(patient_ref or "").startswith("cy:") and tenant_id:   # πελάτης ΓεΣΥ: cy_patients
+        from app.services.cy import contacts as cy_contacts
+        return await cy_contacts.allows(tenant_id, str(patient_ref), channel)
     oid = _oid(patient_ref)
     if not oid or not tenant_id:
         return True

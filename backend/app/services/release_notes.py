@@ -27,6 +27,21 @@ from app.core.db import shared_db
 COLL = "release_notes"
 SEEN = "release_notes_seen"
 
+# ΧΩΡΑ (17/11/2026): η Κύπρος έχει άλλες οθόνες. Μια ελληνική σημείωση («…από την ΗΔΥΚΑ») σε
+# κυπριακό φαρμακείο μπερδεύει, και το αντίστροφο. Σημείωση χωρίς χώρα = παλιά, άρα ελληνική.
+COUNTRIES = ("GR", "CY", "ALL")
+
+
+def _audience(country: str) -> dict:
+    if (country or "GR").upper() == "CY":
+        return {"country": {"$in": ["CY", "ALL"]}}
+    return {"$or": [{"country": {"$in": ["GR", "ALL"]}}, {"country": {"$exists": False}}]}
+
+
+async def _country_of(tenant_id: str) -> str:
+    t = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"country": 1})
+    return ((t or {}).get("country") or "GR").upper()
+
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -55,7 +70,7 @@ def _vsort(v: str) -> str:
 
 
 async def upsert(version: str, *, date: datetime | None = None, title: str = "",
-                 items: list[dict] | None = None, published: bool = False) -> dict:
+                 items: list[dict] | None = None, published: bool = False, country: str = "GR") -> dict:
     """Δημιουργία/ενημέρωση σημείωσης έκδοσης. `items`: [{title, body, icon?}]."""
     v = str(version or "").strip()
     if not v:
@@ -73,6 +88,7 @@ async def upsert(version: str, *, date: datetime | None = None, title: str = "",
     await shared_db()[COLL].update_one({"_id": v}, {"$set": {
         "date": date or _now(), "title": str(title or "").strip()[:160],
         "items": clean, "published": bool(published), "updated_at": _now(),
+        "country": country if country in COUNTRIES else "GR",
         "vsort": _vsort(v)}}, upsert=True)
     return {"ok": True, "version": v, "items": len(clean)}
 
@@ -82,6 +98,7 @@ async def admin_list(limit: int = 300) -> list[dict]:
     for r in rows:
         r["version"] = r.pop("_id")
         r.pop("vsort", None)
+        r.setdefault("country", "GR")
     return rows
 
 
@@ -100,7 +117,8 @@ async def delete(version: str) -> dict:
 async def for_tenant(tenant_id: str, limit: int = 40) -> dict:
     """Δημοσιευμένες σημειώσεις + πόσες δεν έχει δει ακόμη αυτό το φαρμακείο."""
     db = shared_db()
-    rows = [r async for r in db[COLL].find({"published": True}).sort("vsort", -1).limit(limit)]
+    aud = _audience(await _country_of(tenant_id))
+    rows = [r async for r in db[COLL].find({"published": True, **aud}).sort("vsort", -1).limit(limit)]
     seen = await db[SEEN].find_one({"_id": tenant_id}) or {}
     last = seen.get("last_version")
     lastk = _vkey(last) if last else (0, 0, 0)
@@ -118,7 +136,8 @@ async def for_tenant(tenant_id: str, limit: int = 40) -> dict:
 async def mark_seen(tenant_id: str) -> dict:
     """Ο πελάτης είδε τη λίστα → όλα μέχρι την τελευταία δημοσιευμένη παύουν να είναι «νέα»."""
     db = shared_db()
-    top = await db[COLL].find({"published": True}).sort("vsort", -1).limit(1).to_list(length=1)
+    aud = _audience(await _country_of(tenant_id))
+    top = await db[COLL].find({"published": True, **aud}).sort("vsort", -1).limit(1).to_list(length=1)
     if not top:
         return {"ok": True, "last_version": None}
     v = top[0]["_id"]

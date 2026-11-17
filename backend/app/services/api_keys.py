@@ -39,7 +39,20 @@ SCOPES: dict[str, str] = {
     "loyalty:read": "Ανάγνωση προγράμματος επιβράβευσης (υπόλοιπα, δώρα)",
     "loyalty:write": "Εγγραφή μελών και εξαργύρωση πόντων από το ταμείο",
     "clinical:read": "Έλεγχος αλληλεπιδράσεων & συμβουλές PharmaCat",
+    "gesy_xml:write": "Αποστολή XML εκτελέσεων ΓεΣΥ (αυτόματη λήψη από την υπηρεσία των Windows)",
 }
+
+#: Ανά χώρα: ό,τι δουλεύει με τα δεδομένα της. Η Κύπρος δεν έχει ελληνικές εκτελέσεις/ταμείο/ΑΜΚΑ,
+#: η Ελλάδα δεν έχει XML ΓεΣΥ. Ένα κλειδί με δικαίωμα που δεν εφαρμόζεται = σύγχυση για τον συνεργάτη.
+COUNTRY_SCOPES: dict[str, set[str]] = {
+    "CY": {"gesy_xml:write", "products:read", "stock:read", "stock:write", "orders:read", "orders:write"},
+    "GR": set(SCOPES) - {"gesy_xml:write"},
+}
+
+
+def scopes_for(country: str) -> dict[str, str]:
+    allowed = COUNTRY_SCOPES.get((country or "GR").upper(), COUNTRY_SCOPES["GR"])
+    return {k: v for k, v in SCOPES.items() if k in allowed}
 
 #: Scopes που αγγίζουν δεδομένα υγείας/ταυτότητας. Δίνονται μόνο με ρητή επιλογή και
 #: καταγράφονται ξεχωριστά — ο φαρμακοποιός είναι ο υπεύθυνος επεξεργασίας.

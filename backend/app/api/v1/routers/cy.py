@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from app.core.db import shared_db
 
 from app.core.deps import TenantContext
+from app.repositories.cy import CyPatientRepository
 from app.services.cy import analytics, chains, insights
 from app.services.cy.gate import require_cy
 from app.services.cy.importer import MAX_TOTAL_BYTES, CyImportError, import_files
@@ -50,7 +51,94 @@ async def patient_card(ref: str, ctx: TenantContext = Depends(require_cy)):
     acc = await PatientAccountRepository().cy_account_for(ctx.tenant_id, ref)
     card["portal"] = {"invited": bool(acc),
                       "email": ((acc or {}).get("email") or "")[:2] + "…" if acc else None}
+    p = await CyPatientRepository(tenant_id=ctx.tenant_id).find_one({"pseudo_id": ref}) or {}
+    c = p.get("contact") or {}
+    card["contact"] = {"mobile": c.get("mobile"), "email": c.get("email"),
+                       "marketing_consent": bool(c.get("marketing_consent")),
+                       "consent_at": c.get("consent_at"), "unsubscribed": bool(c.get("unsubscribed_at")),
+                       "source": c.get("source"), "updated_at": c.get("updated_at")}
+    card["loyalty"] = await _loyalty_of(ctx, ref)
+    # Προχορηγήσεις: το «χρωστά σκευάσματα» βρίσκει τον φαρμακοποιό εκεί που ήδη κοιτάζει
+    from app.core.deps import _module_locked
+    if not _module_locked(ctx, "advance_dispensing"):
+        from app.services.cy import loans
+        card["loans"] = [{"id": ln["id"], "created_at": ln["created_at"], "age_days": ln["age_days"],
+                          "items": [i["name"] for i in ln["items"] if i.get("status") == "open"]}
+                         for ln in await loans.listing(ctx.tenant_id, status="open", patient_ref=ref)]
     return card
+
+
+async def _loyalty_of(ctx: TenantContext, ref: str) -> dict | None:
+    """Πιστότητα του πελάτη (ίδιο πρόγραμμα με την Ελλάδα). None όταν το πρόσθετο δεν είναι ενεργό."""
+    from app.repositories.loyalty import LoyaltyRepository
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services.auth_service import resolve_tenant_modules, tenant_has
+    if not tenant_has(await resolve_tenant_modules(ctx.tenant_id), "loyalty"):
+        return None
+    shell = await PatientAccountRepository().cy_shell_id(ctx.tenant_id, ref)
+    if not shell:
+        return {"enrolled": False}
+    repo = LoyaltyRepository(tenant_id=ctx.tenant_id)
+    if not await repo.is_enrolled(str(shell)):
+        return {"enrolled": False}
+    m = await repo.member(str(shell)) or {}
+    return {"enrolled": True, "points": m.get("points", 0), "balance_cents": m.get("balance_cents", 0),
+            "tier": m.get("tier"), "patient_ref": str(shell)}
+
+
+class LoyaltyIn(BaseModel):
+    enroll: bool = True
+
+
+@router.post("/patients/{ref}/loyalty")
+async def patient_loyalty(ref: str, body: LoyaltyIn, ctx: TenantContext = Depends(require_cy)):
+    """Εγγραφή/διαγραφή πελάτη ΓεΣΥ στην πιστότητα από την Καρτέλα πελάτη."""
+    from app.repositories.loyalty import LoyaltyRepository
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services.auth_service import resolve_tenant_modules, tenant_has
+    _perm(ctx, "portal:manage")
+    if not tenant_has(await resolve_tenant_modules(ctx.tenant_id), "loyalty"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "loyalty_not_enabled")
+    p = await CyPatientRepository(tenant_id=ctx.tenant_id).find_one({"pseudo_id": ref})
+    if not p:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    accounts = PatientAccountRepository()
+    repo = LoyaltyRepository(tenant_id=ctx.tenant_id)
+    if body.enroll:
+        shell = await accounts.cy_shell(ctx.tenant_id, ref, p.get("full_name"))
+        await repo.enroll(str(shell), method="in_store", name=p.get("full_name"))
+    else:
+        shell = await accounts.cy_shell_id(ctx.tenant_id, ref)
+        if shell:
+            await repo.unenroll(str(shell))
+    return {"ok": True, "loyalty": await _loyalty_of(ctx, ref)}
+
+
+class ContactIn(BaseModel):
+    mobile: str | None = Field(None, max_length=30)
+    email: str | None = Field(None, max_length=200)
+    marketing_consent: bool | None = None
+
+
+@router.put("/patients/{ref}/contact")
+async def put_contact(ref: str, body: ContactIn, ctx: TenantContext = Depends(require_cy)):
+    """Στοιχεία επικοινωνίας που γράφει ο φαρμακοποιός (το XML ΓεΣΥ δεν τα έχει).
+    Η συγκατάθεση δίνεται ρητά, με το τικ, αφού τη ζητήσει από τον πελάτη."""
+    from app.services.cy import contacts as cy_contacts
+    _perm(ctx, "patients:read")
+    try:
+        c = await cy_contacts.set_contact(ctx.tenant_id, ref, body.model_dump(exclude_unset=True),
+                                          source="pharmacist")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    if c is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    return {"ok": True}
+
+
+def _perm(ctx: TenantContext, perm: str) -> None:
+    if perm not in ctx.permissions and "*" not in ctx.permissions:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "insufficient_permissions")
 
 
 class PortalInviteIn(BaseModel):
@@ -64,7 +152,6 @@ class PortalInviteIn(BaseModel):
 async def portal_invite(ref: str, body: PortalInviteIn, ctx: TenantContext = Depends(require_cy)):
     """Πρόσκληση πελάτη ΓεΣΥ στην πύλη. Ο φαρμακοποιός γράφει την ταυτότητα/ARC που βλέπει μπροστά του·
     πρέπει να ταιριάζει με αυτή του XML (σύγκριση ψευδωνύμων — η ταυτότητα δεν αποθηκεύεται)."""
-    from app.repositories.cy import CyPatientRepository
     from app.services.auth_service import resolve_tenant_modules, tenant_has
     from app.services.cy.parser import patient_key
     from app.services.patient_auth_service import PatientAuthService
@@ -87,9 +174,18 @@ async def portal_invite(ref: str, body: PortalInviteIn, ctx: TenantContext = Dep
     first, last = (parts[0], parts[1]) if len(parts) == 2 else (p.get("full_name") or "", "")
     t = await shared_db()["tenants"].find_one({"_id": ctx.tenant_id}, {"name": 1, "company": 1}) or {}
     name = (t.get("company") or {}).get("name") or t.get("name")
-    return await PatientAuthService().cy_invite(
+    res = await PatientAuthService().cy_invite(
         tenant_id=ctx.tenant_id, cy_pseudo=ref, first_name=first, last_name=last,
         email=body.email, phone=body.phone, pharmacy_name=name)
+    if res.get("ok"):   # ό,τι έδωσε ο πελάτης για την πύλη γίνεται και στοιχείο της καρτέλας του (χωρίς συγκατάθεση)
+        from app.services.cy import contacts as cy_contacts
+        from app.services.cy.contacts import norm_mobile
+        data = {"email": body.email, **({"mobile": body.phone} if norm_mobile(body.phone) else {})}
+        try:
+            await cy_contacts.set_contact(ctx.tenant_id, ref, data, source="pharmacist")
+        except ValueError:
+            pass
+    return res
 
 
 @router.get("/not-dispensed")
@@ -149,6 +245,21 @@ async def dash_top(date_from: date, date_to: date, dim: str = "doctors", limit: 
     if dim not in ("doctors", "products"):
         raise HTTPException(status_code=400, detail="bad_dim")
     return await analytics.top(ctx.tenant_id, date_from, date_to, dim=dim, limit=max(1, min(limit, 50)))
+
+
+@router.get("/profitability")
+async def profitability(date_from: date | None = None, date_to: date | None = None,
+                        ctx: TenantContext = Depends(require_cy)):
+    """Κέρδος ανά σκεύασμα: έσοδα χωρίς ΦΠΑ − χονδρική της Αποθήκης. Χωρίς χονδρική → όχι στο κέρδος.
+    Ίδιο πρόσθετο με την Ελλάδα (`profitability`)."""
+    _addon(ctx, "profitability")
+    return await analytics.profitability(ctx.tenant_id, date_from, date_to)
+
+
+@router.get("/reorder")
+async def reorder(horizon: int = 14, ctx: TenantContext = Depends(require_cy)):
+    """Πρόταση παραγγελίας: ανοιχτές συνταγές του διαστήματος + ό,τι έλειψε − απόθεμα αποθήκης."""
+    return await insights.reorder(ctx.tenant_id, horizon=max(3, min(horizon, 60)))
 
 
 @router.get("/staff")
@@ -212,3 +323,160 @@ async def import_xml(files: list[UploadFile] = File(...), ctx: TenantContext = D
         return await import_files(ctx.tenant_id, payload)
     except CyImportError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+
+# ── Καμπάνιες (ίδια μηχανή αποστολής με την Ελλάδα, κυπριακό κοινό) ──────────
+
+class CyCampaignIn(BaseModel):
+    channel: str = Field(..., pattern="^(sms|viber|email|push)$")
+    segment: str = "all"
+    purpose: str = Field("commercial", pattern="^(commercial|care)$")
+    subject: str | None = Field(None, max_length=150)
+    message: str = Field(..., min_length=3, max_length=1000)
+
+
+@router.get("/campaigns/segments")
+async def campaign_segments(ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy.contacts import SEGMENTS
+    return {"items": [{"key": k, "label": v[0], "label_en": v[1], "clinical": v[2]} for k, v in SEGMENTS.items()]}
+
+
+@router.get("/campaigns/audience")
+async def campaign_audience(channel: str, segment: str = "all", ctx: TenantContext = Depends(require_cy)):
+    """Πόσοι θα το λάβουν και πόσοι εξαιρούνται, και γιατί, ΠΡΙΝ την αποστολή."""
+    from app.services.cy import contacts as cy_contacts
+    _perm(ctx, "portal:manage")
+    try:
+        a = await cy_contacts.audience(ctx.tenant_id, channel, segment)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    return {k: v for k, v in a.items() if k != "recipients"} | {
+        "recipients": len(a["recipients"]), "sample": [r.get("name") for r in a["recipients"][:5]]}
+
+
+@router.post("/campaigns", status_code=202)
+async def campaign_send(body: CyCampaignIn, ctx: TenantContext = Depends(require_cy)):
+    """Βάζει την καμπάνια στην ουρά (ίδιος worker, χρέωση και ιδιοπάθεια με την Ελλάδα).
+    Κοινό με δεδομένα υγείας (συνταγές, αναλώσιμα) → μόνο μήνυμα φροντίδας."""
+    from app.services import campaign_engine
+    from app.services.cy.contacts import SEGMENTS, clinical
+    from app.workers.comms import dispatch_campaign
+    _perm(ctx, "portal:manage")
+    if body.segment not in SEGMENTS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown_segment")
+    if clinical(body.segment) and body.purpose != "care":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "clinical_segment_requires_care_purpose")
+    if body.channel == "email" and not (body.subject or "").strip():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "subject_required")
+    res = await campaign_engine.create(
+        ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
+        segment=body.segment, value=None, purpose=body.purpose,
+        by=getattr(ctx, "email", None) or ctx.user_id)
+    if res["recipients"]:
+        dispatch_campaign.delay(res["campaign_id"])
+    return {**res, "queued": True}
+
+
+@router.get("/campaigns")
+async def campaign_history(ctx: TenantContext = Depends(require_cy)):
+    _perm(ctx, "portal:manage")
+    rows = await shared_db()["comms_campaigns"].find(  # tenant-ok: tenant_id στο φίλτρο
+        {"tenant_id": ctx.tenant_id}, {"message": 1, "channel": 1, "segment": 1, "status": 1, "subject": 1,
+                                       "recipients": 1, "sent": 1, "failed": 1, "created_at": 1, "purpose": 1}
+    ).sort("created_at", -1).limit(50).to_list(length=50)
+    return {"items": [{**{k: v for k, v in r.items() if k != "_id"}, "id": str(r["_id"])} for r in rows]}
+
+
+# ── Προχορηγήσεις (δανεικά) Κύπρου ──────────────────────────────────────────
+
+def _addon(ctx: TenantContext, module: str) -> None:
+    from app.core.deps import _module_locked
+    if _module_locked(ctx, module):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "module_locked", "module": module})
+
+
+class LoanItemIn(BaseModel):
+    gtin: str | None = Field(None, max_length=20)
+    name: str | None = Field(None, max_length=200)
+    qty: int = Field(1, ge=1, le=20)
+    lot: str | None = Field(None, max_length=40)
+    expiry: str | None = Field(None, max_length=12)
+
+
+class LoanIn(BaseModel):
+    patient_ref: str = Field(..., min_length=8, max_length=100)
+    items: list[LoanItemIn] = Field(..., min_length=1, max_length=30)
+    note: str = Field("", max_length=300)
+
+
+class ScanIn(BaseModel):
+    raw: str = Field(..., min_length=1, max_length=300)
+
+
+class LoanItemStatusIn(BaseModel):
+    cleared: bool
+    dispensing_id: str | None = Field(None, max_length=80)
+
+
+@router.post("/loans/scan")
+async def loan_scan(body: ScanIn, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import loans
+    _perm(ctx, "patients:read")
+    _addon(ctx, "advance_dispensing")
+    return await loans.scan(ctx.tenant_id, body.raw)
+
+
+@router.post("/loans", status_code=201)
+async def loan_create(body: LoanIn, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import loans
+    _perm(ctx, "patients:read")
+    _addon(ctx, "advance_dispensing")
+    try:
+        return await loans.create(ctx.tenant_id, patient_ref=body.patient_ref,
+                                  items=[i.model_dump() for i in body.items], note=body.note,
+                                  by=getattr(ctx, "email", None) or ctx.user_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+
+@router.get("/loans")
+async def loan_list(state: str = "open", patient_ref: str | None = None, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import loans
+    _perm(ctx, "patients:read")
+    _addon(ctx, "advance_dispensing")
+    st = state if state in ("open", "closed", "cancelled", "all") else "open"
+    return {"items": await loans.listing(ctx.tenant_id, status=st, patient_ref=patient_ref)}
+
+
+@router.get("/loans/suggestions")
+async def loan_suggestions(ctx: TenantContext = Depends(require_cy)):
+    """Εκτελέσεις ΓεΣΥ που φαίνεται να καλύπτουν ανοιχτά δανεικά. ΠΡΟΤΑΣΗ: η ξεχρέωση θέλει «ναι»."""
+    from app.services.cy import loans
+    _perm(ctx, "patients:read")
+    _addon(ctx, "advance_dispensing")
+    return {"items": await loans.suggestions(ctx.tenant_id)}
+
+
+@router.post("/loans/{loan_id}/items/{idx}")
+async def loan_item(loan_id: str, idx: int, body: LoanItemStatusIn, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import loans
+    _perm(ctx, "patients:read")
+    _addon(ctx, "advance_dispensing")
+    try:
+        return await loans.set_item(ctx.tenant_id, loan_id, idx, cleared=body.cleared,
+                                    dispensing_id=body.dispensing_id, by=getattr(ctx, "email", None) or ctx.user_id)
+    except LookupError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found") from None
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+
+
+@router.delete("/loans/{loan_id}")
+async def loan_cancel(loan_id: str, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import loans
+    _perm(ctx, "patients:read")
+    _addon(ctx, "advance_dispensing")
+    try:
+        return await loans.cancel(ctx.tenant_id, loan_id, by=getattr(ctx, "email", None) or ctx.user_id)
+    except LookupError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found") from None

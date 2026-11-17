@@ -36,6 +36,9 @@ async def sync_from_account(account_id, *, verify: bool = True,
     acc = await db["patient_accounts"].find_one({"_id": oid})
     if not acc:
         return {"synced": 0}
+    if acc.get("country") == "CY":   # πελάτης ΓεΣΥ: καρτέλα στο cy_patients, μέσω του συνδέσμου της πύλης
+        from app.services.cy import contacts as cy_contacts
+        return await cy_contacts.sync_from_account(acc)
     amka = str(acc.get("amka") or "").strip()
     if not amka:
         return {"synced": 0}

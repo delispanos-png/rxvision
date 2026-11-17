@@ -409,3 +409,17 @@ class Advise(BaseModel):
                                          description="`none`, `gp`, `urgent` or `emergency`.",
                                          examples=["gp"])
     source: str | None = Field(default=None, examples=["llm"])
+
+
+class CyFileError(BaseModel):
+    file: str = Field(description="The file name (inside the ZIP, if you sent one).")
+    error: str = Field(description="Why it was rejected, in plain words.")
+
+
+class CyImportResult(BaseModel):
+    files: int = Field(description="How many XML files we found in what you sent.")
+    imported: int = Field(description="New dispensings stored.")
+    updated: int = Field(description="Dispensings we already had, replaced by a corrected version.")
+    duplicates: int = Field(description="Already stored exactly as sent (or an older version) — nothing changed.")
+    failed: int = Field(description="Files rejected. See `errors`.")
+    errors: list[CyFileError] = Field(default_factory=list)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, get_current_context
 from app.services import release_notes
@@ -41,6 +41,7 @@ class NoteIn(BaseModel):
     date: datetime | None = None
     items: list[ItemIn] = []
     published: bool = False
+    country: str = Field("GR", pattern="^(GR|CY|ALL)$")   # σε ποια φαρμακεία φαίνεται
 
 
 @admin_router.get("/release-notes")
@@ -52,7 +53,7 @@ async def list_notes():
 async def save_note(body: NoteIn):
     res = await release_notes.upsert(
         body.version, date=body.date, title=body.title,
-        items=[i.model_dump() for i in body.items], published=body.published)
+        items=[i.model_dump() for i in body.items], published=body.published, country=body.country)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=res)
     return res

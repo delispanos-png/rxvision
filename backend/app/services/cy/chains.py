@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from app.repositories.cy import CyDispensingRepository, CyPatientRepository
 
 TZ = ZoneInfo("Asia/Nicosia")
+# Προεπιλογές. Οι ΙΣΧΥΟΥΣΕΣ τιμές έρχονται από το adminpanel (gate.cy_rules) σε κάθε υπολογισμό.
 DEFAULT_INTERVAL = {"drug": 28, "consumable": 30}
 LOST_AFTER_DAYS = 14  # τόσες ημέρες μετά την αναμενόμενη επίσκεψη → «χάθηκε»
 SOON_DAYS = 7         # αναμένεται μέσα στις επόμενες 7 ημέρες → «έρχεται σύντομα»
@@ -32,15 +33,16 @@ def local_day(dt: datetime) -> date:
     return dt.astimezone(TZ).date()
 
 
-def classify(*, instance: int, instances: int, due: date, today: date) -> str:
+def classify(*, instance: int, instances: int, due: date, today: date,
+             lost_after: int = LOST_AFTER_DAYS, soon: int = SOON_DAYS) -> str:
     if instance >= instances:
         return "closed"
     overdue = (today - due).days
-    if overdue > LOST_AFTER_DAYS:
+    if overdue > lost_after:
         return "lost"
     if overdue > 0:
         return "late"
-    if -overdue <= SOON_DAYS:
+    if -overdue <= soon:
         return "soon"
     return "upcoming"
 
@@ -48,7 +50,10 @@ def classify(*, instance: int, instances: int, due: date, today: date) -> str:
 async def chains(tenant_id: str, *, today: date | None = None,
                  match: dict | None = None) -> list[dict[str, Any]]:
     """Μία εγγραφή ανά συνταγή, με κατάσταση και αναμενόμενη επόμενη επίσκεψη."""
+    from app.services.cy.gate import cy_rules
     today = today or datetime.now(tz=TZ).date()
+    rules = await cy_rules()
+    default_interval = {"drug": rules["drug_interval_days"], "consumable": rules["consumable_interval_days"]}
     rows = await CyDispensingRepository(tenant_id=tenant_id).aggregate([
         *([{"$match": match}] if match else []),
         {"$sort": {"dispensed_at": 1}},
@@ -72,7 +77,7 @@ async def chains(tenant_id: str, *, today: date | None = None,
     for r in rows:
         last_at = r["last_at"] if isinstance(r["last_at"], datetime) else datetime.fromisoformat(str(r["last_at"]))
         durs = [d for d in (r.get("durations") or []) if isinstance(d, int) and d > 0]
-        interval = max(durs) if durs else DEFAULT_INTERVAL.get(r.get("kind"), 28)
+        interval = max(durs) if durs else default_interval.get(r.get("kind"), rules["drug_interval_days"])
         due = local_day(last_at) + timedelta(days=interval)
         instance, instances = int(r.get("instance") or 0), int(r.get("instances") or 0)
         remaining = max(0, instances - instance)
@@ -86,7 +91,9 @@ async def chains(tenant_id: str, *, today: date | None = None,
             "instance": instance, "instances": instances, "remaining": remaining,
             "items": [i for i in (r.get("items") or []) if i][:6],
             "avg_value_cents": avg, "value_at_stake_cents": avg * remaining,
-            "status": classify(instance=instance, instances=instances, due=due, today=today),
+            "lost_after_days": rules["lost_after_days"],
+            "status": classify(instance=instance, instances=instances, due=due, today=today,
+                               lost_after=rules["lost_after_days"], soon=rules["soon_days"]),
         })
     return out
 
@@ -102,7 +109,7 @@ def adherence(cs: list[dict[str, Any]], today: date) -> dict[str, Any]:
         if not c.get("instances") or not c.get("first_at"):
             continue
         first = c["first_at"] if isinstance(c["first_at"], datetime) else datetime.fromisoformat(str(c["first_at"]))
-        elapsed = (today - local_day(first)).days - LOST_AFTER_DAYS - 1
+        elapsed = (today - local_day(first)).days - c.get("lost_after_days", LOST_AFTER_DAYS) - 1
         possible = c["instances"] - c["first_instance"] + 1
         exp = min(possible, 1 + (elapsed // c["interval_days"] if elapsed >= 0 else 0))
         got = min(possible, c["visits"])   # φάσεις που εκτελέστηκαν ΕΔΩ (μία εκτέλεση = μία φάση)
@@ -187,7 +194,8 @@ async def lost_customers(tenant_id: str, *, today: date | None = None) -> dict[s
         "monthly_value_cents": sum(i["monthly_value_cents"] for i in items),
         "value_at_stake_cents": sum(i["value_at_stake_cents"] for i in items),
     }
-    return {"summary": summary, "items": items, "lost_after_days": LOST_AFTER_DAYS}
+    from app.services.cy.gate import cy_rules
+    return {"summary": summary, "items": items, "lost_after_days": (await cy_rules())["lost_after_days"]}
 
 
 async def overview(tenant_id: str, *, today: date | None = None) -> dict[str, Any]:

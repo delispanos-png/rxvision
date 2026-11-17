@@ -13,7 +13,8 @@ import { adminApi } from "@/lib/adminClient";
 import { appAlert, appConfirm } from "@/store/dialogStore";
 
 type Item = { title: string; body?: string; icon?: string | null; where?: string | null };
-type Note = { version: string; date?: string; title?: string; items: Item[]; published: boolean };
+type Note = { version: string; date?: string; title?: string; items: Item[]; published: boolean; country?: "GR" | "CY" | "ALL" };
+const COUNTRY_LABEL = { GR: "🇬🇷 Ελλάδα", CY: "🇨🇾 Κύπρος", ALL: "Όλα τα φαρμακεία" } as const;
 
 const fmt = (s?: string) => (s ? new Date(s).toLocaleDateString("el-GR") : "");
 
@@ -34,7 +35,7 @@ export default function ReleaseNotesAdmin() {
   async function save() {
     if (!edit?.version.trim()) { appAlert("Γράψε αριθμό έκδοσης."); return; }
     await adminApi("/admin/release-notes", { method: "PUT", body: JSON.stringify({
-      version: edit.version.trim(), title: edit.title || "", published: edit.published,
+      version: edit.version.trim(), title: edit.title || "", published: edit.published, country: edit.country || "GR",
       items: (edit.items || []).filter((i) => i.title.trim()) }) });
     setEdit(null);
     qc.invalidateQueries({ queryKey: ["admin", "release-notes"] });
@@ -95,6 +96,13 @@ export default function ReleaseNotesAdmin() {
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm text-slate-600">
+              Για:
+              <select value={edit.country || "GR"} onChange={(e) => setEdit({ ...edit, country: e.target.value as Note["country"] })}
+                className="rounded-lg border border-slate-300 px-2 py-1 text-sm">
+                {(["GR", "CY", "ALL"] as const).map((c) => <option key={c} value={c}>{COUNTRY_LABEL[c]}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-600">
               <input type="checkbox" checked={edit.published}
                 onChange={(e) => setEdit({ ...edit, published: e.target.checked })} />
               Δημοσιευμένο στους πελάτες
@@ -114,6 +122,7 @@ export default function ReleaseNotesAdmin() {
               <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600">v{n.version}</span>
               <span className="text-xs text-slate-400">{fmt(n.date)}</span>
               {n.title && <span className="text-sm font-medium text-slate-800">{n.title}</span>}
+              <span className="text-xs text-slate-500">{COUNTRY_LABEL[n.country || "GR"]}</span>
               <span className="text-xs text-slate-400">{n.items?.length ?? 0} γραμμές</span>
               <span className="ml-auto flex items-center gap-1.5">
                 <button onClick={() => togglePublish(n)}
