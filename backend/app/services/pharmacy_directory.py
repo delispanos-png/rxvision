@@ -50,6 +50,16 @@ async def names_of(tenant_ids: list[str]) -> dict[str, str]:
             shared_db()["tenants"].find({"_id": {"$in": list(tenant_ids)}}, {"name": 1})}
 
 
+async def country_block(me: str, target: str) -> dict | None:
+    """Ελλάδα και Κύπρος ΔΕΝ ενώνονται σε δίκτυο ή συνομιλία (απόθεμα, τιμές, μηνύματα θα περνούσαν
+    από τη μία αγορά στην άλλη — ρητή οδηγία 18/11/2026)."""
+    from app.services.cy.gate import same_country
+    if await same_country(me, target):
+        return None
+    return {"ok": False, "error": "other_country",
+            "message": "Το φαρμακείο αυτό ανήκει σε άλλη χώρα. Δίκτυα και συνομιλίες γίνονται μόνο μεταξύ φαρμακείων της ίδιας χώρας."}
+
+
 async def join_block(target: str, *, module: str, require_module: bool) -> dict | None:
     """Μπορεί αυτό το φαρμακείο να μπει στο δίκτυο; None = ναι, αλλιώς το μήνυμα άρνησης.
 

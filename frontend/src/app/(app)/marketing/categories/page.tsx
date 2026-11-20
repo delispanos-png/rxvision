@@ -9,7 +9,7 @@ import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
 type Cat = { key: string; label: string; icon: string; offer: string; patients: number; reachable: number; value: number };
-type Res = { items: Cat[]; catalog: { key: string; label: string; icon: string; offer: string }[] };
+type Res = { items: Cat[]; country?: string; catalog: { key: string; label: string; icon: string; offer: string }[] };
 
 const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`;
 
@@ -17,7 +17,10 @@ export default function TherapyCategoriesPage() {
   const t = useT();
   const router = useRouter();
   const q = useQuery({ queryKey: ["marketing-cats"], queryFn: () => api<Res>("/marketing/categories") });
-  const go = (key: string, channel?: string) => router.push(`/communications?segment=therapy&value=${key}${channel ? `&channel=${channel}` : ""}`);
+  const isCy = q.data?.country === "CY";
+  const go = (key: string, channel?: string) => router.push(isCy
+    ? `/cy/campaigns?segment=${encodeURIComponent(`therapy:${key}`)}${channel ? `&channel=${channel}` : ""}`
+    : `/communications?segment=therapy&value=${key}${channel ? `&channel=${channel}` : ""}`);
 
   return (
     <ModuleGuard module="marketing">

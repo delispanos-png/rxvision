@@ -29,11 +29,18 @@ CARE_TYPES = ["ΜΦΗ / Γηροκομείο", "Ξενώνας ΑμεΑ", "Δο�
               "Κατ' οίκον φροντίδα", "Ιδιώτης φροντιστής", "Άλλο"]
 
 
-def _groups(ctx: TenantContext) -> PatientGroupRepository:
+async def _groups(ctx: TenantContext) -> PatientGroupRepository:
+    """Κύπρος: ίδια οθόνη, μέλη = ψευδώνυμα ΓεΣΥ, χρέωση = συμμετοχή ΓεΣΥ (repositories/cy_groups.py)."""
+    from app.repositories.cy_groups import CyPatientGroupRepository, is_cy
+    if await is_cy(ctx.tenant_id):
+        return CyPatientGroupRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return PatientGroupRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
 
 
-def _acc(ctx: TenantContext) -> CareAccountRepository:
+async def _acc(ctx: TenantContext) -> CareAccountRepository:
+    from app.repositories.cy_groups import CyCareAccountRepository, is_cy
+    if await is_cy(ctx.tenant_id):
+        return CyCareAccountRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return CareAccountRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
 
 
@@ -75,23 +82,31 @@ def _date(s: str | None) -> datetime | None:
 
 
 # ── δομές ─────────────────────────────────────────────────────────────────────────────
+def _is_cy_acc(acc) -> bool:
+    from app.repositories.cy_groups import CyCareAccountRepository
+    return isinstance(acc, CyCareAccountRepository)
+
+
 @router.get("")
 async def list_structures(q: str | None = Query(None),
                           ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    r = await _groups(ctx).list_groups(kind=CARE, q=q, limit=200)
+    r = await (await _groups(ctx)).list_groups(kind=CARE, q=q, limit=200)
     return {**r, "care_types": CARE_TYPES}
 
 
 @router.get("/portfolio")
 async def portfolio(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Όλες οι δομές με το ανοιχτό υπόλοιπό τους — η οθόνη που ανοίγει πρώτη."""
-    return await _acc(ctx).portfolio()
+    return await (await _acc(ctx)).portfolio()
 
 
 @router.get("/patients")
 async def search_patients(q: str = Query(..., min_length=2),
                           ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Δική της αναζήτηση: το `/patients/search` απαιτεί άλλο πρόσθετο."""
+    from app.repositories.cy_groups import is_cy, search_patients as cy_search
+    if await is_cy(ctx.tenant_id):
+        return {"items": await cy_search(ctx.tenant_id, q, demo=ctx.demo)}
     from app.repositories.patients import PatientExecutionsRepository
     repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return {"items": await repo.search(q)}
@@ -100,32 +115,32 @@ async def search_patients(q: str = Query(..., min_length=2),
 @router.post("")
 async def create_structure(body: GroupIn,
                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _groups(ctx).create(kind=CARE, name=body.name, by=ctx.user_id)
+    return await (await _groups(ctx)).create(kind=CARE, name=body.name, by=ctx.user_id)
 
 
 @router.get("/{gid}")
 async def structure_detail(gid: str, months: int = Query(12, ge=1, le=60),
                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     now = datetime.now(tz=timezone.utc).replace(tzinfo=None)
-    d = await _groups(ctx).detail(gid, date_from=now - timedelta(days=30 * months),
+    d = await (await _groups(ctx)).detail(gid, date_from=now - timedelta(days=30 * months),
                                   date_to=now + timedelta(days=1))
     if not d:
         return {"error": "not_found"}
-    d["balance"] = await _acc(ctx).balance(gid)
+    d["balance"] = await (await _acc(ctx)).balance(gid)
     return d
 
 
 @router.patch("/{gid}")
 async def rename_structure(gid: str, body: GroupIn,
                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _groups(ctx).rename(gid, body.name)
+    return await (await _groups(ctx)).rename(gid, body.name)
 
 
 @router.patch("/{gid}/settings")
 async def care_settings(gid: str, body: CareSettings,
                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     cycle = {"days": body.cycle_days} if body.cycle_days else None
-    return await _groups(ctx).update_care(gid, care_type=body.care_type, cycle=cycle,
+    return await (await _groups(ctx)).update_care(gid, care_type=body.care_type, cycle=cycle,
                                           billing=body.billing,
                                           charges_from=_date(body.charges_from))
 
@@ -133,21 +148,21 @@ async def care_settings(gid: str, body: CareSettings,
 @router.delete("/{gid}")
 async def delete_structure(gid: str,
                            ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _groups(ctx).delete(gid)
+    return await (await _groups(ctx)).delete(gid)
 
 
 # ── τρόφιμοι ──────────────────────────────────────────────────────────────────────────
 @router.post("/{gid}/members")
 async def add_member(gid: str, body: MemberIn,
                      ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _groups(ctx).add_member(gid, amka=body.amka, patient_id=body.patient_id,
+    return await (await _groups(ctx)).add_member(gid, amka=body.amka, patient_id=body.patient_id,
                                          label=body.label, role=body.role)
 
 
 @router.delete("/{gid}/members/{pseudo_id}")
 async def remove_member(gid: str, pseudo_id: str,
                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _groups(ctx).remove_member(gid, pseudo_id)
+    return await (await _groups(ctx)).remove_member(gid, pseudo_id)
 
 
 # ── λογαριασμός ───────────────────────────────────────────────────────────────────────
@@ -155,7 +170,7 @@ async def remove_member(gid: str, pseudo_id: str,
 async def statement(gid: str, month: str | None = Query(None),
                     ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Εκκαθαριστικό μήνα: υπόλοιπο από προηγούμενο → χρεώσεις → εισπράξεις → νέο υπόλοιπο."""
-    d = await _acc(ctx).statement(gid, month or "")
+    d = await (await _acc(ctx)).statement(gid, month or "")
     return d or {"error": "not_found"}
 
 
@@ -163,30 +178,31 @@ async def statement(gid: str, month: str | None = Query(None),
 async def add_entry(gid: str, body: EntryIn,
                     ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Είσπραξη ή χειροκίνητη χρέωση. Τις ΣΥΜΜΕΤΟΧΕΣ δεν τις καταχωρεί κανείς — παράγονται."""
-    return await _acc(ctx).add_entry(gid, kind=body.kind, amount_cents=body.amount_cents,
+    return await (await _acc(ctx)).add_entry(gid, kind=body.kind, amount_cents=body.amount_cents,
                                      at=_date(body.at), note=body.note, by=ctx.user_id)
 
 
 @router.delete("/{gid}/entries/{eid}")
 async def delete_entry(gid: str, eid: str,
                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    return await _acc(ctx).delete_entry(gid, eid)
+    return await (await _acc(ctx)).delete_entry(gid, eid)
 
 
 # ── η λίστα ΠΡΟΣ ΤΗ ΔΟΜΗ ──────────────────────────────────────────────────────────────
-def _owed_html(name: str, rows: list[dict], days: int) -> str:
+def _owed_html(name: str, rows: list[dict], days: int, *, cy: bool = False) -> str:
     """Το κείμενο που φεύγει στη δομή. ΟΧΙ «φέρτε μας συνταγές» — η δομή δεν εκδίδει συνταγές.
 
     Στην Ελλάδα τη συνταγή τη γράφει ο ΓΙΑΤΡΟΣ. Η δομή πρέπει να φροντίσει να εκδοθεί και να
     φτάσει σε εμάς. Αυτό λέει το κείμενο, αλλιώς ζητάμε κάτι που δεν μπορούν να κάνουν.
     """
     def rx(r: dict) -> str:
-        tag = ("<span style='color:#0a7'>άυλη — δεν χρειάζεται χαρτί</span>"
-               if r.get("intangible") else "<span style='color:#a60'>έντυπη</span>")
+        # Κύπρος: το ΓεΣΥ δεν έχει «άυλη/έντυπη» — καμία ετικέτα
+        tag = "" if cy else ("<span style='color:#0a7'>άυλη — δεν χρειάζεται χαρτί</span>"
+                             if r.get("intangible") else "<span style='color:#a60'>έντυπη</span>")
         d = r.get("opens_at")
         when = d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else "—"
         meds = ", ".join(r.get("items") or [])[:160]
-        return (f"<li><b>{r['barcode']}</b> — ανοίγει {when} · {tag}"
+        return (f"<li><b>{r['barcode']}</b> — {'επόμενη φάση' if cy else 'ανοίγει'} {when}{' · ' + tag if tag else ''}"
                 + (f"<br><span style='color:#666;font-size:12px'>{meds}</span>" if meds else "")
                 + "</li>")
     body = "".join(
@@ -197,8 +213,9 @@ def _owed_html(name: str, rows: list[dict], days: int) -> str:
             f"<p style='color:#555;margin:0 0 4px'>Οι παρακάτω αγωγές ανοίγουν μέσα στις επόμενες "
             f"{days} ημέρες. Για να τις έχουμε έτοιμες, χρειάζεται να φροντίσετε να εκδοθούν από "
             f"τον θεράποντα ιατρό και να φτάσουν σε εμάς.</p>"
-            f"<p style='color:#555;margin:0 0 10px'>Όπου αναφέρεται «άυλη», δεν χρειάζεται να "
-            f"φέρετε χαρτί — αρκεί ο κωδικός.</p>{body}</div>")
+            + ("" if cy else "<p style='color:#555;margin:0 0 10px'>Όπου αναφέρεται «άυλη», δεν χρειάζεται να "
+                              "φέρετε χαρτί — αρκεί ο κωδικός.</p>")
+            + f"{body}</div>")
 
 
 @router.get("/{gid}/owed")
@@ -206,15 +223,16 @@ async def owed(gid: str, days: int = Query(30, ge=1, le=365),
                ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """ΑΝΑ ΤΡΟΦΙΜΟ: ποια barcode πρέπει να φτάσουν σε εμάς. Αυτό στέλνεται στη δομή."""
     from app.services import group_lists
-    cy = await _acc(ctx).cycle(gid, days=days)
+    acc = await _acc(ctx)
+    cy = await acc.cycle(gid, days=days)
     if not cy:
         return {"error": "not_found"}
     rows = group_lists.by_person(cy.get("opening") or [])
-    g = await _groups(ctx).find_one({"_id": __import__("bson").ObjectId(gid)})
+    g = await (await _groups(ctx)).find_one({"_id": __import__("bson").ObjectId(gid)})
     return {"group": cy["group"], "days": days, "people": rows,
             "email": ((g or {}).get("billing") or {}).get("email"),
             "contact": ((g or {}).get("billing") or {}).get("contact_name"),
-            "html": _owed_html(cy["group"].get("name") or "", rows, days)}
+            "html": _owed_html(cy["group"].get("name") or "", rows, days, cy=_is_cy_acc(acc))}
 
 
 @router.post("/{gid}/owed/send")
@@ -224,10 +242,11 @@ async def owed_send(gid: str, days: int = Query(30, ge=1, le=365),
     """Αποστολή της λίστας με email στη δομή."""
     from app.services import group_lists
     from app.services.mailer import send_email
-    cy = await _acc(ctx).cycle(gid, days=days)
+    acc = await _acc(ctx)
+    cy = await acc.cycle(gid, days=days)
     if not cy:
         return {"ok": False, "error": "not_found"}
-    g = await _groups(ctx).find_one({"_id": __import__("bson").ObjectId(gid)})
+    g = await (await _groups(ctx)).find_one({"_id": __import__("bson").ObjectId(gid)})
     addr = (to or "").strip() or ((g or {}).get("billing") or {}).get("email")
     if not addr:
         return {"ok": False, "error": "no_email"}
@@ -237,7 +256,7 @@ async def owed_send(gid: str, days: int = Query(30, ge=1, le=365),
     name = cy["group"].get("name") or ""
     try:
         await send_email(addr, f"Αγωγές που ανανεώνονται — {name}",
-                         _owed_html(name, rows, days))
+                         _owed_html(name, rows, days, cy=_is_cy_acc(acc)))
     except Exception:                      # noqa: BLE001 — το SMTP δεν ρίχνει την οθόνη
         return {"ok": False, "error": "send_failed"}
     return {"ok": True, "to": addr, "people": len(rows)}
@@ -263,14 +282,18 @@ def _instr_html(name: str, rows: list[dict]) -> str:
 
 async def _instr_rows(ctx: TenantContext, gid: str) -> tuple[dict | None, list[dict]]:
     from app.services import group_lists
-    acc = _acc(ctx)
+    acc = await _acc(ctx)
     g = await acc._group(gid)
     if not g:
         return None, []
     wins = await acc._member_windows(g)
     names = {str(w["_id"]): w["name"] for w in wins}
-    rows = await group_lists.instructions(acc._db, ctx.tenant_id,
-                                          [w["_id"] for w in wins], names)
+    if _is_cy_acc(acc):
+        from app.services.cy import group_lists as cy_gl
+        rows = await cy_gl.instructions(ctx.tenant_id, [w["_id"] for w in wins], names)
+    else:
+        rows = await group_lists.instructions(acc._db, ctx.tenant_id,
+                                              [w["_id"] for w in wins], names)
     return g, rows
 
 
@@ -309,5 +332,5 @@ async def instructions_send(gid: str, to: str | None = Query(None),
 async def cycle(gid: str, days: int = Query(30, ge=1, le=365),
                 ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Τι ανοίγει, τι να παραγγείλεις, τι εκκρεμεί — για τον επόμενο κύκλο."""
-    d = await _acc(ctx).cycle(gid, days=days)
+    d = await (await _acc(ctx)).cycle(gid, days=days)
     return d or {"error": "not_found"}

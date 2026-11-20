@@ -301,11 +301,7 @@ class PatientIntelligenceRepository(BaseRepository):
 
         active60 = sum(1 for p in pats if seen_after(p, d_active))
         # YoY: distinct patients with an execution in the SAME 60-day window last year
-        ya = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
-                        "executed_at": {"$gte": yact_lo, "$lt": yact_hi}}},
-            {"$group": {"_id": "$patient_ref"}}, {"$count": "n"}]).to_list(1)
-        active60_prev = ya[0]["n"] if ya else 0
+        active60_prev = await self._active_count(yact_lo, yact_hi)
         # NEW = the patient's first-EVER execution falls in the period (never executed before)
         new_month = sum(1 for evs in tl.values() if evs and evs[0][0] >= mstart)
         new_prev = sum(1 for evs in tl.values() if evs and mstart_y <= evs[0][0] < yago)
@@ -318,18 +314,9 @@ class PatientIntelligenceRepository(BaseRepository):
         rev_per_patient = round(total_rev / len(pats)) if pats else 0
 
         # prescriptions this month + avg value
-        agg = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC, "executed_at": {"$gte": mstart}}},
-            {"$group": {"_id": None, "n": {"$sum": 1}, "val": {"$sum": "$amount_total"}}},
-        ]).to_list(1)
-        rx_month = (agg[0]["n"] if agg else 0)
-        avg_rx = round((agg[0]["val"] / agg[0]["n"]) if agg and agg[0]["n"] else 0)
-        aggp = await self._db["prescription_executions"].aggregate([
-            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
-                        "executed_at": {"$gte": mstart_y, "$lt": yago}}},
-            {"$group": {"_id": None, "n": {"$sum": 1}}},
-        ]).to_list(1)
-        rx_prev = (aggp[0]["n"] if aggp else 0)
+        rx_month, val_month = await self._exec_totals(mstart)
+        avg_rx = round(val_month / rx_month) if rx_month else 0
+        rx_prev, _ = await self._exec_totals(mstart_y, yago)
 
         # compliance (patients with recurring chains)
         comp_scores = [c["compliance"] for c in chain.values() if c.get("compliance") is not None]
@@ -369,6 +356,24 @@ class PatientIntelligenceRepository(BaseRepository):
             "trend": await self._trend(),
             "insights": self._ai_insights(kpis, recall_patients, recall_recoverable, winback_revenue, chain, pats),
         })
+
+    # Πηγές του Dashboard σε ΜΙΑ θέση: η Κύπρος (repositories/cy_intelligence.py) δίνει τις δικές της.
+    async def _exec_totals(self, lo: datetime, hi: datetime | None = None) -> tuple[int, int]:
+        """(εκτελέσεις, αξία) που μετρούν στα στατιστικά, στο [lo, hi)."""
+        rng: dict = {"$gte": lo, **({"$lt": hi} if hi else {})}
+        agg = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC, "executed_at": rng}},
+            {"$group": {"_id": None, "n": {"$sum": 1}, "val": {"$sum": "$amount_total"}}},
+        ]).to_list(1)
+        return (agg[0]["n"], agg[0]["val"]) if agg else (0, 0)
+
+    async def _active_count(self, lo: datetime, hi: datetime) -> int:
+        """Διακριτοί ασθενείς με εκτέλεση που μετρά, στο [lo, hi)."""
+        ya = await self._db["prescription_executions"].aggregate([
+            {"$match": {"tenant_id": self.tenant_id, **COUNTABLE_EXEC,
+                        "executed_at": {"$gte": lo, "$lt": hi}}},
+            {"$group": {"_id": "$patient_ref"}}, {"$count": "n"}]).to_list(1)
+        return ya[0]["n"] if ya else 0
 
     async def _trend(self) -> dict:
         """Daily (30d), weekly (12w), monthly (12m) prescription counts + value."""

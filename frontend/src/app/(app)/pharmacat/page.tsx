@@ -9,6 +9,7 @@ import {
 import { api } from "@/lib/apiClient";
 import { appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { fmtEur } from "@/lib/formatters";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -61,6 +62,7 @@ export default function PharmaCatPage() {
 
 function PharmaCatInner() {
   const t = useT();
+  const isCy = useCountry() === "CY";
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -208,7 +210,7 @@ function PharmaCatInner() {
         {turns.length === 0 && !blocked && (
           <div className="space-y-4 py-6 text-center">
             <Sparkles className="mx-auto h-8 w-8 text-violet-400" />
-            <p className="text-sm text-slate-500">{t("Περιγράψτε ένα σύμπτωμα ή ρωτήστε κλινικά (π.χ. «Ασθενής με Xarelto & Concor — μπορώ Algofren;»). Ο PharmaCat κάνει triage, ελέγχει red flags & αλληλεπιδράσεις, και προτείνει κατηγορίες/προϊόντα.", "Describe a symptom or ask clinically (e.g. \"Patient on Xarelto & Concor — can I give Algofren?\"). PharmaCat triages, checks red flags & interactions, suggests categories/products.")}</p>
+            <p className="text-sm text-slate-500">{isCy ? t("Περιγράψτε ένα σύμπτωμα ή ρωτήστε κλινικά (π.χ. «Ασθενής με Xarelto & Concor — μπορώ Nurofen;»). Ο PharmaCat κάνει triage, ελέγχει red flags & αλληλεπιδράσεις, και προτείνει κατηγορίες/σκευάσματα από τον κατάλογο Κύπρου.", "Describe a symptom or ask clinically (e.g. \"Patient on Xarelto & Concor — can I give Nurofen?\"). PharmaCat triages, checks red flags & interactions, suggests categories/products from the Cyprus catalogue.") : t("Περιγράψτε ένα σύμπτωμα ή ρωτήστε κλινικά (π.χ. «Ασθενής με Xarelto & Concor — μπορώ Algofren;»). Ο PharmaCat κάνει triage, ελέγχει red flags & αλληλεπιδράσεις, και προτείνει κατηγορίες/προϊόντα.", "Describe a symptom or ask clinically (e.g. \"Patient on Xarelto & Concor — can I give Algofren?\"). PharmaCat triages, checks red flags & interactions, suggests categories/products.")}</p>
             <div className="flex flex-wrap justify-center gap-1.5">
               {SYMPTOMS.map(([el, en]) => <button key={el} onClick={() => send(t(el, en))} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 hover:border-violet-300 hover:bg-violet-50 dark:border-slate-700 dark:bg-slate-800">{t(el, en)}</button>)}
             </div>
@@ -265,7 +267,7 @@ function PharmaCatInner() {
               <>
                 <div className="mb-3 flex items-start justify-between gap-2">
                   <div>
-                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-violet-500"><Info className="h-3.5 w-3.5" /> {t("Πληροφορίες ΗΔΥΚΑ", "ΗΔΥΚΑ info")}</div>
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase text-violet-500"><Info className="h-3.5 w-3.5" /> {isCy ? t("Κατάλογος Κύπρου", "Cyprus catalogue") : t("Πληροφορίες ΗΔΥΚΑ", "ΗΔΥΚΑ info")}</div>
                     <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">{med.full_name}</h3>
                   </div>
                   <button onClick={() => setMed(null)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
@@ -277,7 +279,7 @@ function PharmaCatInner() {
                   {row(t("Μορφή", "Form"), med.form_code)}
                   {row(t("Συσκευασία", "Package"), med.package_form)}
                   {row("Barcode", med.barcode)}
-                  {row(t("Λιανική (Δελτίο Τιμών)", "Retail (price bulletin)"), med.retail_cents != null ? fmtEur(med.retail_cents) : null)}
+                  {row(isCy ? t("Λιανική", "Retail") : t("Λιανική (Δελτίο Τιμών)", "Retail (price bulletin)"), med.retail_cents != null ? fmtEur(med.retail_cents) : null)}
                   {row(t("Χονδρική", "Wholesale"), med.wholesale_cents != null ? fmtEur(med.wholesale_cents) : null)}
                   {row(t("Τιμή αναφοράς", "Reference price"), med.reference_cents ? fmtEur(med.reference_cents) : null)}
                   {row(t("Συμμετοχή", "Participation"), med.participation != null ? `${med.participation}%` : null)}

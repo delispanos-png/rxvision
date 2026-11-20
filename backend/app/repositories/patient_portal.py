@@ -651,6 +651,20 @@ class PatientAccountRepository:
             {"tenant_id": tenant_id, "pseudo_id": shell_pseudo}, {"_id": 1})
         return pat["_id"] if pat else None
 
+    async def cy_shell_ids(self, tenant_id: str) -> list:
+        """Όλες οι καρτέλες πύλης πελατών ΓεΣΥ του φαρμακείου (για μέτρηση push/λογαριασμών)."""
+        return await self.db["patients_anonymized"].distinct(  # tenant-ok: explicit tenant_id
+            "_id", {"tenant_id": tenant_id, "source": "cy_portal"})
+
+    async def cy_pseudos_of(self, tenant_id: str, refs) -> set[str]:
+        """Καρτέλες πύλης (ObjectId/str) → ψευδώνυμα ΓεΣΥ. Ό,τι δεν είναι κυπριακή καρτέλα αγνοείται."""
+        oids = [o for o in (_oid(r) for r in refs) if o]
+        if not oids:
+            return set()
+        return {d["cy_pseudo_id"] async for d in self.db["patients_anonymized"].find(  # tenant-ok: explicit tenant_id
+            {"tenant_id": tenant_id, "_id": {"$in": oids}, "source": "cy_portal"}, {"cy_pseudo_id": 1})
+            if d.get("cy_pseudo_id")}
+
     async def cy_shell_id(self, tenant_id: str, cy_pseudo: str) -> ObjectId | None:
         """Η καρτέλα πύλης του πελάτη ΓεΣΥ, αν υπάρχει (χωρίς δημιουργία)."""
         pat = await self.db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
@@ -1163,35 +1177,44 @@ class PatientRxRepository(BaseRepository):
         now = datetime.now(tz=timezone.utc)
         horizon = now - timedelta(days=180)
         therapies: dict = {}
-        async for ex in self._coll.find(  # tenant-ok: _scope adds tenant_id
-                self._scope({"patient_ref": pid, "executed_at": {"$gte": horizon}})).sort("executed_at", -1):
-            async for it in self._db["prescription_items"].find(
-                    {"tenant_id": self.tenant_id, "execution_id": ex["_id"]}):
-                # Ενεργή αγωγή = ό,τι ΠΗΡΕ, έστω και μερικώς. Ο έλεγχος «πλήρως εκτελεσμένο»
-                # πετούσε έξω τις μισο-δοσμένες συσκευασίες, δηλαδή φάρμακα που ο ασθενής
-                # όντως παίρνει — και μαζί τους κάθε έλεγχο αλληλεπίδρασης/συμμόρφωσης.
-                if not (it.get("executed_qty")
-                        if it.get("executed_qty") is not None else it.get("is_executed", True)):
-                    continue
-                d = it.get("details") or {}
-                prod = (await self._db["products"].find_one({"_id": it.get("product_id")})
-                        if it.get("product_id") else None)
-                name = (prod or {}).get("name") or d.get("eof_code") or "Φάρμακο"
-                med_key = str(it.get("product_id") or d.get("eof_code") or name)
-                if med_key in therapies:        # keep only the most recent execution per medicine
-                    continue
-                plan = ms.frequency_plan(d.get("frequency"))   # βάση: η συχνότητα του γιατρού
-                ro = ms.runout_date(ex.get("executed_at"), d.get("duration"))
-                active = (ro >= now) if ro else (ex.get("executed_at") and ex["executed_at"] >= now - timedelta(days=90))
-                if not active:
-                    continue
-                therapies[med_key] = {
-                    "med_key": med_key, "name": name, "eof": d.get("eof_code"),
-                    "dose": (str(d.get("dose")).replace("_", " ").strip() if d.get("dose") else None),
-                    "dosage_text": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
-                    "plan": plan, "kind": plan["kind"], "per_day": plan["per_day"],
-                    "runout": ro, "last_dispensed": ex.get("executed_at"),
-                    "days_left": ((ro - now).days if ro else None)}
+        # ΚΥΠΡΟΣ: η καρτέλα πύλης (`cy_portal`) δείχνει σε πελάτη ΓεΣΥ → οι αγωγές έρχονται από τις
+        # εκτελέσεις ΓεΣΥ (ίδιο σχήμα therapy· όλο το υπόλοιπο κύκλωμα μένει κοινό).
+        shell = await self._db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": self.tenant_id, "_id": pid, "source": "cy_portal"}, {"cy_pseudo_id": 1})
+        cy_pseudo = (shell or {}).get("cy_pseudo_id")
+        if cy_pseudo:
+            from app.services.cy import meds as cy_meds
+            therapies = await cy_meds.therapies(self.tenant_id, cy_pseudo, now)
+        else:
+            async for ex in self._coll.find(  # tenant-ok: _scope adds tenant_id
+                    self._scope({"patient_ref": pid, "executed_at": {"$gte": horizon}})).sort("executed_at", -1):
+                async for it in self._db["prescription_items"].find(
+                        {"tenant_id": self.tenant_id, "execution_id": ex["_id"]}):
+                    # Ενεργή αγωγή = ό,τι ΠΗΡΕ, έστω και μερικώς. Ο έλεγχος «πλήρως εκτελεσμένο»
+                    # πετούσε έξω τις μισο-δοσμένες συσκευασίες, δηλαδή φάρμακα που ο ασθενής
+                    # όντως παίρνει — και μαζί τους κάθε έλεγχο αλληλεπίδρασης/συμμόρφωσης.
+                    if not (it.get("executed_qty")
+                            if it.get("executed_qty") is not None else it.get("is_executed", True)):
+                        continue
+                    d = it.get("details") or {}
+                    prod = (await self._db["products"].find_one({"_id": it.get("product_id")})
+                            if it.get("product_id") else None)
+                    name = (prod or {}).get("name") or d.get("eof_code") or "Φάρμακο"
+                    med_key = str(it.get("product_id") or d.get("eof_code") or name)
+                    if med_key in therapies:        # keep only the most recent execution per medicine
+                        continue
+                    plan = ms.frequency_plan(d.get("frequency"))   # βάση: η συχνότητα του γιατρού
+                    ro = ms.runout_date(ex.get("executed_at"), d.get("duration"))
+                    active = (ro >= now) if ro else (ex.get("executed_at") and ex["executed_at"] >= now - timedelta(days=90))
+                    if not active:
+                        continue
+                    therapies[med_key] = {
+                        "med_key": med_key, "name": name, "eof": d.get("eof_code"),
+                        "dose": (str(d.get("dose")).replace("_", " ").strip() if d.get("dose") else None),
+                        "dosage_text": _format_dosage(d.get("dose"), d.get("frequency"), d.get("duration")),
+                        "plan": plan, "kind": plan["kind"], "per_day": plan["per_day"],
+                        "runout": ro, "last_dispensed": ex.get("executed_at"),
+                        "days_left": ((ro - now).days if ro else None)}
         await self._rekey_forked(pid, therapies)
         enabled = set()
         rem_cfg: dict = {}   # med_key → {time, meal} (ανά φάρμακο, ό,τι όρισε ο ασθενής στην ενεργοποίηση)
@@ -1256,7 +1279,8 @@ class PatientRxRepository(BaseRepository):
                   "start": _as_date(t.get("plan_start") or t.get("last_dispensed"))}
                  for t in ths if t["enabled"]]
         return jsonsafe({"therapies": ths, "week": ms.weekly_grid(plans, slot_times),
-                         "slot_times": slot_times, "streak": streak, "taken_today": taken_today})
+                         "slot_times": slot_times, "streak": streak, "taken_today": taken_today,
+                         "country": "CY" if cy_pseudo else "GR"})
 
     async def set_med_plan(self, patient_ref: str, body: dict, *, by: str | None = None,
                            doctor_text: str | None = None) -> dict:
@@ -1433,51 +1457,73 @@ class PatientRxRepository(BaseRepository):
         #
         # ΠΟΤΕ ΔΟΘΗΚΕ: η χρονοσφραγίδα της ταινίας γνησιότητας (`coupons[].executed_at`) είναι η
         # πραγματική ώρα παράδοσης του ΣΥΓΚΕΚΡΙΜΕΝΟΥ είδους. Αλλιώς, η πρώτη εγγραφή της συνταγής.
-        execs: dict = {}
-        async for e in self._coll.find(  # tenant-ok: _scope adds tenant_id
-                self._scope({"patient_ref": pid, "executed_at": {"$gte": since}, **COUNTABLE_EXEC}),
-                {"executed_at": 1, "external_id": 1}):
-            if e.get("executed_at"):
-                execs[e["_id"]] = (_aware(e["executed_at"]),
-                                   str(e.get("external_id") or e["_id"]).split(":")[0])
-
-        def _coupon_time(d: dict) -> datetime | None:
-            ts = [str(c.get("executed_at")) for c in (d.get("coupons") or []) if c.get("executed_at")]
-            for t in sorted(ts):
-                try:
-                    return datetime.strptime(t[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
-                except ValueError:
-                    continue
-            return None
-
-        per_rx: dict = {}         # (ταυτότητα, συνταγή) → [ώρα, ημέρες κάλυψης | None]
+        per_rx: dict = {}         # (ταυτότητα, συνταγή/φάση) → [ώρα, ημέρες κάλυψης | None]
         alias: dict = {}          # product_id / ΕΟΦ → ταυτότητα
         latest_freq: dict = {}
-        if execs:
-            async for it in self._db["prescription_items"].find(
-                    {"tenant_id": self.tenant_id, "execution_id": {"$in": list(execs)},
-                     "executed_qty": {"$gt": 0}},
-                    {"product_id": 1, "details": 1, "executed_qty": 1, "quantity": 1, "execution_id": 1}):
-                d = it.get("details") or {}
-                pid_s = str(it.get("product_id") or "")
-                ident = str(d.get("eof_code") or pid_s)
-                if not ident:
-                    continue
-                if pid_s:
-                    alias[pid_s] = ident
-                alias[ident] = ident
-                rec_at, presc = execs[it["execution_id"]]
-                start = _coupon_time(d) or rec_at
-                ro = ms.runout_date(start, d.get("duration"))
-                days = (_aware(ro) - start).days if ro else None
-                q, eq = int(it.get("quantity") or 0), int(it.get("executed_qty") or 0)
-                if days and q and 0 < eq < q:
-                    days = max(1, round(days * eq / q))
-                k = (ident, presc)
-                if k not in per_rx or start < per_rx[k][0]:
-                    per_rx[k] = [start, days]
-                if ident not in latest_freq or start > latest_freq[ident][0]:
-                    latest_freq[ident] = (start, d.get("frequency"))
+        latest_plan: dict = {}    # Κύπρος: σχέδιο λήψης απευθείας από τις δόσεις/ημέρα του ΓεΣΥ
+        # ΚΥΠΡΟΣ: ίδιος υπολογισμός κάλυψης, πηγή οι εκτελέσεις ΓεΣΥ (κάθε εκτέλεση = μία φάση, με
+        # ημερομηνία και ημέρες κάλυψης ανά γραμμή). Ταυτότητα φαρμάκου = ίδια με το πρόγραμμα λήψης.
+        shell = await self._db["patients_anonymized"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": self.tenant_id, "_id": pid, "source": "cy_portal"}, {"cy_pseudo_id": 1})
+        if (shell or {}).get("cy_pseudo_id"):
+            from app.repositories.cy import CyDispensingRepository
+            from app.services.cy import meds as cy_meds
+            for d in await CyDispensingRepository(tenant_id=self.tenant_id).find(
+                    {"patient_ref": shell["cy_pseudo_id"], "dispensed_at": {"$gte": since}}, limit=500):
+                at = cy_meds._dt(d.get("dispensed_at"))
+                for ln in d.get("lines") or []:
+                    if ln.get("kind") != "drug" or not ln.get("qty_disp") or not at:
+                        continue
+                    ident = cy_meds.key_of(ln)   # ίδια ταυτότητα με το πρόγραμμα λήψης
+                    alias[ident] = ident
+                    dose = ln.get("dosage") or {}
+                    days = ln.get("days_covered") or dose.get("duration_days")
+                    per_rx[(ident, d.get("dispensing_id") or d.get("_id"))] = [at, int(days) if days else None]
+                    if ident not in latest_plan or at > latest_plan[ident][0]:
+                        latest_plan[ident] = (at, cy_meds.plan_for(dose.get("per_day"), dose.get("timing")))
+        else:
+            execs: dict = {}
+            async for e in self._coll.find(  # tenant-ok: _scope adds tenant_id
+                    self._scope({"patient_ref": pid, "executed_at": {"$gte": since}, **COUNTABLE_EXEC}),
+                    {"executed_at": 1, "external_id": 1}):
+                if e.get("executed_at"):
+                    execs[e["_id"]] = (_aware(e["executed_at"]),
+                                       str(e.get("external_id") or e["_id"]).split(":")[0])
+
+            def _coupon_time(d: dict) -> datetime | None:
+                ts = [str(c.get("executed_at")) for c in (d.get("coupons") or []) if c.get("executed_at")]
+                for t in sorted(ts):
+                    try:
+                        return datetime.strptime(t[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        continue
+                return None
+
+            if execs:
+                async for it in self._db["prescription_items"].find(
+                        {"tenant_id": self.tenant_id, "execution_id": {"$in": list(execs)},
+                         "executed_qty": {"$gt": 0}},
+                        {"product_id": 1, "details": 1, "executed_qty": 1, "quantity": 1, "execution_id": 1}):
+                    d = it.get("details") or {}
+                    pid_s = str(it.get("product_id") or "")
+                    ident = str(d.get("eof_code") or pid_s)
+                    if not ident:
+                        continue
+                    if pid_s:
+                        alias[pid_s] = ident
+                    alias[ident] = ident
+                    rec_at, presc = execs[it["execution_id"]]
+                    start = _coupon_time(d) or rec_at
+                    ro = ms.runout_date(start, d.get("duration"))
+                    days = (_aware(ro) - start).days if ro else None
+                    q, eq = int(it.get("quantity") or 0), int(it.get("executed_qty") or 0)
+                    if days and q and 0 < eq < q:
+                        days = max(1, round(days * eq / q))
+                    k = (ident, presc)
+                    if k not in per_rx or start < per_rx[k][0]:
+                        per_rx[k] = [start, days]
+                    if ident not in latest_freq or start > latest_freq[ident][0]:
+                        latest_freq[ident] = (start, d.get("frequency"))
         fills: dict = {}
         for (ident, _presc), (start, days) in per_rx.items():
             fills.setdefault(ident, []).append((start, days))
@@ -1538,7 +1584,8 @@ class PatientRxRepository(BaseRepository):
                 logs.setdefault(lk, []).append(r["date"])
             for key in enabled:
                 ident = alias.get(str(key)) or await self._eof_of_product(str(key)) or str(key)
-                plan = ms.frequency_plan((latest_freq.get(ident) or (None, None))[1])
+                plan = ((latest_plan.get(ident) or (None, None))[1]
+                        or ms.frequency_plan((latest_freq.get(ident) or (None, None))[1]))
                 per_day = int(plan.get("per_day") or 0)
                 ds = sorted({d for k2, v in logs.items() if alias.get(k2, k2) == ident for d in v})
                 if plan.get("kind") != "daily" or not per_day or not ds:

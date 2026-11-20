@@ -154,7 +154,7 @@ class VaultService:
         """Οριστική διαγραφή ΟΛΩΝ των per-tenant secrets (ΗΔΥΚΑ/ΓΕΣΥ creds + pepper) στη διαγραφή
         πελάτη — ώστε να μη μένει καμία «υποδομή» πίσω. Επιστρέφει τα paths που καθαρίστηκαν."""
         cleaned: list[str] = []
-        for source in ("hdika", "gesy", "pepper"):
+        for source in ("hdika", "gesy", "pharmacyone", "pepper"):
             path = f"tenants/{tenant_id}/{source}"
             try:
                 if self.has_secret(path):

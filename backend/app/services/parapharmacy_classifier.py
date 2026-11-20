@@ -132,8 +132,10 @@ async def _ask_ai(names: list[str]) -> dict:
 
 
 async def _tenant_ids() -> list[str]:
+    """Μόνο ελληνικά: το καθολικό μητρώο ονομάτων είναι ελληνικό ράφι· κυπριακά είδη δεν μπαίνουν
+    σε αυτό (ούτε παίρνουν κατηγορίες από αυτό)."""
     db = shared_db()
-    return [t["_id"] async for t in db["tenants"].find({}, {"_id": 1})]
+    return [t["_id"] async for t in db["tenants"].find({"country": {"$ne": "CY"}}, {"_id": 1})]
 
 
 async def _pending_by_tenant() -> dict[str, list[str]]:

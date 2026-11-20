@@ -55,6 +55,8 @@ SECRET_FIELDS: dict[str, tuple[str, ...]] = {
     # αλλά όσο υπάρχουν στη βάση πρέπει να είναι κρυπτογραφημένα — ένα backup που διαρρέει δεν
     # ρωτάει αν το χρησιμοποιούμε.
     "noeton": ("api_key", "inbound_key", "webhook_secret"),
+    # Κύπρος: Client Id της PharmacyOne για τον κοινό κατάλογο ειδών (ταυτοποιεί φαρμακείο → μυστικό)
+    "cy": ("pharmacyone_api_key", "pharmacyone_client_id"),
 }
 
 # `idika` (ΗΔΥΚΑ integrator key) has a NESTED structure: secrets live under test/production sub-docs.

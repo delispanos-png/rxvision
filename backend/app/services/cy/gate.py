@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 
 from app.core.db import shared_db
 from app.core.deps import TenantContext, get_current_context
@@ -66,7 +66,19 @@ async def tenant_country(tenant_id: str) -> str:
     return ((t or {}).get("country") or "GR").upper()
 
 
-async def require_cy(ctx: TenantContext = Depends(get_current_context)) -> TenantContext:
+async def cy_tenant_ids() -> list[str]:
+    """ΤΑ κυπριακά φαρμακεία — ο ΕΝΑΣ ορισμός για κάθε κύκλωμα που αγγίζει ΠΟΛΛΑ φαρμακεία μαζί
+    (κεντρικός κατάλογος, κρατικές τιμές ΗΔΥΚΑ, AI κατηγοριοποίηση, δίκτυα). Η Ελλάδα και η Κύπρος
+    δεν ανταλλάσσουν ΤΙΠΟΤΑ: ούτε είδη, ούτε τιμές, ούτε μέλη δικτύου (ρητή οδηγία 18/11/2026)."""
+    return [t["_id"] async for t in shared_db()["tenants"].find({"country": "CY"}, {"_id": 1})]
+
+
+async def same_country(a: str, b: str) -> bool:
+    return await tenant_country(a) == await tenant_country(b)
+
+
+async def require_cy(request: Request, ctx: TenantContext = Depends(get_current_context)) -> TenantContext:
     if not await cy_enabled() or await tenant_country(ctx.tenant_id) != "CY":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    request.state.cy_demo = bool(getattr(ctx, "demo", False))     # «Λειτουργία παρουσίασης» → CyMaskedRoute κρύβει πρόσωπα
     return ctx

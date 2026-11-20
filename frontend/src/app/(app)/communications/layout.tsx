@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Megaphone } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { ScrollTabs } from "@/components/layout/ScrollTabs";
 
@@ -20,12 +21,19 @@ const TABS = [
   { href: "/communications/automations", el: "Αυτόματα μηνύματα", en: "Automations" },
   { href: "/communications/calendar", el: "Ημερολόγιο", en: "Calendar" },
 ];
+// Κύπρος: νέο μήνυμα = Καμπάνιες Κύπρου (κοινά ΓεΣΥ)· οι «Ομάδες ανθρώπων» στηρίζονται σε ΗΔΥΚΑ → όχι
+const TABS_CY = [
+  { href: "/cy/campaigns", el: "Νέο μήνυμα", en: "New message" },
+  { href: "/communications/automations", el: "Αυτόματα μηνύματα", en: "Automations" },
+  { href: "/communications/calendar", el: "Ημερολόγιο", en: "Calendar" },
+];
 
 /** Το κύκλωμα Επικοινωνίας. Η επισκόπηση είναι ΜΙΑ πρόταση, όχι πίνακας αριθμών: ο φαρμακοποιός
  *  θέλει να ξέρει σε πόσους μίλησε και πόσοι γύρισαν — όχι δέκα δείκτες που δεν συγκρίνει. */
 export default function CommsLayout({ children }: { children: React.ReactNode }) {
   const t = useT();
   const pathname = usePathname();
+  const tabs = useCountry() === "CY" ? TABS_CY : TABS;
   const ov = useQuery({ queryKey: ["comms", "overview"], queryFn: () => api<Overview>("/communications/overview?days=30"), retry: false });
   const o = ov.data;
 
@@ -62,7 +70,7 @@ export default function CommsLayout({ children }: { children: React.ReactNode })
       )}
 
       <ScrollTabs className="mb-6">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = tab.href === "/communications" ? pathname === tab.href : pathname.startsWith(tab.href);
           return (
             <Link key={tab.href} href={tab.href}

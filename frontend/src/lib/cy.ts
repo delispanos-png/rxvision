@@ -32,3 +32,9 @@ export const VAT_OPTIONS: Record<string, { rates: number[]; def: number }> = {
   GR: { rates: [6, 13, 24, 0], def: 6 },
   CY: { rates: [5, 9, 19, 0], def: 5 },
 };
+
+/** Ο προσωπικός κωδικός που δείχνουν οι κοινές οθόνες: ΑΜΚΑ στην Ελλάδα, κωδικός ΟΑΥ στην Κύπρο
+ *  (το backend τον στέλνει στο ίδιο πεδίο `amka` — βλ. repositories/cy_intelligence.py). */
+export function useIdLabel(): string {
+  return useCountry() === "CY" ? "Κωδ. ΟΑΥ" : "ΑΜΚΑ";
+}

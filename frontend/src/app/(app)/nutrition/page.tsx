@@ -5,6 +5,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Salad, Search, Mail, Printer, Loader2, Check, X, User } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PanelCard } from "@/components/ui/Card";
 import { appAlert } from "@/store/dialogStore";
@@ -22,7 +23,19 @@ export default function NutritionPage() {
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<Hit | null>(null);
 
-  const search = useQuery({ queryKey: ["pat-search", q], queryFn: () => api<{ items: Hit[] }>(`/patients/search?q=${encodeURIComponent(q)}`), enabled: q.trim().length >= 2, retry: false });
+  // Κύπρος: αναζήτηση στους πελάτες ΓεΣΥ· η Διατροφή δουλεύει πάνω στην «κάρτα γέφυρας» του πελάτη
+  // (ίδια με της πύλης/του προγράμματος λήψης), ώστε όλο το υπόλοιπο κύκλωμα να μένει κοινό.
+  const isCy = useCountry() === "CY";
+  const search = useQuery({ queryKey: ["pat-search", isCy, q], enabled: q.trim().length >= 2, retry: false,
+    queryFn: () => isCy
+      ? api<{ items: { patient_ref: string; full_name: string | null; hio_code?: string | null }[] }>(`/cy/patients?q=${encodeURIComponent(q)}`)
+          .then((r) => ({ items: r.items.slice(0, 20).map((x) => ({ patient_id: `cy:${x.patient_ref}`, name: x.full_name } as Hit)) }))
+      : api<{ items: Hit[] }>(`/patients/search?q=${encodeURIComponent(q)}`) });
+  const pick = async (h: Hit) => {
+    if (!h.patient_id.startsWith("cy:")) { setPicked(h); return; }
+    const r = await api<{ id: string }>(`/cy/patients/${encodeURIComponent(h.patient_id.slice(3))}/shell`, { method: "POST" });
+    setPicked({ ...h, patient_id: r.id });
+  };
   const plan = useQuery({ queryKey: ["nutrition", picked?.patient_id], queryFn: () => api<Plan>(`/advisor/nutrition/${picked!.patient_id}`), enabled: !!picked, retry: false });
   const [nutNote, setNutNote] = useState("");
   const assigned = useQuery({
@@ -57,7 +70,7 @@ export default function NutritionPage() {
       <div className="mb-4 print:hidden">
         <div className="relative max-w-xl">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setPicked(null); }} placeholder={t("Αναζήτηση: όνομα, ΑΜΚΑ, τηλέφωνο ή email…", "Search: name, ΑΜΚΑ, phone or email…")} aria-label={t("Αναζήτηση ασθενή", "Search patient")}
+          <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setPicked(null); }} placeholder={isCy ? t("Αναζήτηση: όνομα ή κωδικός ΟΑΥ…", "Search: name or HIO code…") : t("Αναζήτηση: όνομα, ΑΜΚΑ, τηλέφωνο ή email…", "Search: name, ΑΜΚΑ, phone or email…")} aria-label={t("Αναζήτηση ασθενή", "Search patient")}
             className="w-full rounded-xl border border-slate-300 py-3 pl-10 pr-4 text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200" />
         </div>
         {q.trim().length >= 2 && !picked && (
@@ -65,7 +78,7 @@ export default function NutritionPage() {
             {search.isLoading ? <div className="p-3 text-sm text-slate-400">{t("Αναζήτηση…", "Searching…")}</div> :
               (search.data?.items?.length ?? 0) === 0 ? <div className="p-3 text-sm text-slate-400">{t("Καμία εγγραφή.", "No records.")}</div> :
                 search.data!.items.map((h) => (
-                  <button key={h.patient_id} onClick={() => setPicked(h)} className="flex w-full items-center justify-between gap-3 border-b border-slate-50 px-4 py-2.5 text-left last:border-0 hover:bg-slate-50">
+                  <button key={h.patient_id} onClick={() => pick(h)} className="flex w-full items-center justify-between gap-3 border-b border-slate-50 px-4 py-2.5 text-left last:border-0 hover:bg-slate-50">
                     <span className="flex items-center gap-2"><User className="h-4 w-4 text-slate-400" /><span className="font-medium text-slate-800">{h.name || "—"}</span><span className="text-xs text-slate-400">{h.amka || ""}</span></span>
                     <span className="text-xs text-slate-400">{h.mobile || h.email || ""}</span>
                   </button>

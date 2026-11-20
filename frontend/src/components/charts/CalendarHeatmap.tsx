@@ -23,6 +23,10 @@ export function CalendarHeatmap({
   const dates = data.map((d) => d[0]).sort();
   const range = dates.length ? [dates[0], dates[dates.length - 1]] : undefined;
 
+  // Χωρίς ημερομηνίες (π.χ. όσο φορτώνουν τα δεδομένα) ΔΕΝ σχεδιάζουμε: η echarts με calendar.range
+  // undefined έριχνε «Cannot read properties of undefined (reading 'toString')» (18/11/2026).
+  if (!range) return <div style={{ height }} />;
+
   const option = {
     tooltip: {
       appendToBody: true,

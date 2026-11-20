@@ -18,6 +18,8 @@ async def _setup(monkeypatch):
     db = AsyncMongoMockClient()["portal_inv"]
     monkeypatch.setattr(pp, "shared_db", lambda: db)
     monkeypatch.setattr(pa, "shared_db", lambda: db)
+    from app.services.cy import gate   # ο router ρωτά και τη χώρα (Ελλάδα/Κύπρος) του φαρμακείου
+    monkeypatch.setattr(gate, "shared_db", lambda: db)
     monkeypatch.setattr(pp.vault, "tenant_pepper", lambda tid: "pepper")
 
     async def modules(tid):
@@ -86,7 +88,9 @@ async def test_profile_status_says_already_registered(monkeypatch):
     class Repo:
         async def _patient_by_amka(self, amka):
             return await db["patients_anonymized"].find_one({"tenant_id": TID, "amka": amka})
-    monkeypatch.setattr(pi, "_repo", lambda ctx: Repo())
+    async def _r(ctx):
+        return Repo()
+    monkeypatch.setattr(pi, "_repo", _r)
     assert (await pi.portal_account_status("16106701895", _ctx())) == {"exists": False}
     await pa.invite_customer(pa.InviteIn(email="gogosmou@yahoo.gr", amka="16106701895"), _ctx())
     st = await pi.portal_account_status("16106701895", _ctx())

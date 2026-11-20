@@ -14,7 +14,7 @@ celery_app = Celery(
     include=["app.workers.ingestion", "app.workers.snapshots",
              "app.workers.billing", "app.workers.optical", "app.workers.reminders",
              "app.workers.ops_health", "app.workers.copilot_routines",
-             "app.workers.capacity",
+             "app.workers.capacity", "app.workers.cy_pharmacyone",
              "app.workers.contacts_backfill", "app.workers.death_sweep",
              "app.workers.area_canonical", "app.workers.supplier_photos",
              "app.workers.catalog_categories",
@@ -47,6 +47,7 @@ _QUEUE_BY_MODULE = {
     "leads": "maintenance",
     "integrity": "maintenance",     # νυχτερινός αυτοέλεγχος δεδομένων — κανείς δεν περιμένει
     "intelligence_warm": "maintenance",   # προετοιμασία Patient Intelligence — κανείς δεν περιμένει
+    "cy_pharmacyone": "sync",       # Κύπρος: εξωτερικό API PharmacyOne — αργό, κανείς δεν περιμένει
     # Ό,τι δεν αναφέρεται εδώ → "fast": comms, reminders, billing, sessions, coach,
     # copilot_routines, ops_health, capacity. Κοινό τους: κάποιος ΑΝΘΡΩΠΟΣ περιμένει
     # (ο φύλακας διαθεσιμότητας κόμβου είναι ελαφρύς και το παράθυρο αποθέματος στενό).
@@ -421,6 +422,21 @@ celery_app.conf.beat_schedule = {
     "cy-next-step": {
         "task": "app.workers.reminders.dispatch_cy_next_step",
         "schedule": crontab(hour=7, minute=5),
+    },
+    # Κύπρος — PharmacyOne: εκτελέσεις ΓεΣΥ κάθε ώρα (ξαναδιαβάζει 7 ημέρες: Failed → Resent)
+    "cy-pharmacyone-executions": {
+        "task": "app.workers.cy_pharmacyone.sync_executions_all",
+        "schedule": crontab(minute=20),
+    },
+    # Κύπρος — κεντρικός κατάλογος ειδών: αυξητικά κάθε ώρα, πλήρες πέρασμα 01:10 UTC (διαγραφές)
+    "cy-pharmacyone-items": {
+        "task": "app.workers.cy_pharmacyone.sync_items",
+        "schedule": crontab(minute=50),
+    },
+    "cy-pharmacyone-items-full": {
+        "task": "app.workers.cy_pharmacyone.sync_items",
+        "schedule": crontab(hour=1, minute=10),
+        "kwargs": {"full": True},
     },
     # Loyalty — «έχεις πόντους, εξαργύρωσε» εβδομαδιαία υπενθύμιση (Δευτέρα 08:00 UTC)
     "loyalty-rewards-nudge": {

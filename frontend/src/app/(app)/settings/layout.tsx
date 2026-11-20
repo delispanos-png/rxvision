@@ -18,7 +18,7 @@ const TABS: { href: string; el: string; en: string; module?: string; grOnly?: bo
   { href: "/settings/menus", el: "Μενού ανά ρόλο", en: "Menu per role" },
   { href: "/settings/ingestion", el: "Διασύνδεση ΗΔΥΚΑ", en: "ΗΔΥΚΑ Connection" , grOnly: true },
   { href: "/settings/closing", el: "Κλείσιμο Μήνα", en: "Month Closing" , grOnly: true },
-  { href: "/settings/catalog", el: "Ενημέρωση καταλόγου", en: "Catalog updates", module: "catalog_seed" , grOnly: true },
+  { href: "/settings/catalog", el: "Ενημέρωση καταλόγου", en: "Catalog updates", module: "catalog_seed" },   // Κύπρος: πηγή PharmacyOne
   { href: "/settings/pharmacy-chat", el: "Συνεργαζόμενα φαρμακεία", en: "Partner pharmacies" },
   { href: "/settings/availability", el: "Ωράριο & Διαθεσιμότητα", en: "Hours & Availability" },
   { href: "/settings/communications", el: "Επικοινωνία", en: "Communications" },

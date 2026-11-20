@@ -42,6 +42,7 @@ export default function CyProfitabilityPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Κερδοφορία", "Profitability")}</h1>
           <p className="mt-1 text-sm text-slate-500">{t("Κέρδος ανά σκεύασμα: έσοδα χωρίς ΦΠΑ μείον χονδρική από την Αποθήκη.", "Profit per product: revenue excl. VAT minus wholesale from the Warehouse.")}</p>
+          <p className="mt-1 text-xs text-slate-400">{t("Η αμοιβή του φαρμακείου από τον ΟΑΥ δεν υπάρχει στο XML ΓεΣΥ και δεν περιλαμβάνεται εδώ — βλέπεις μόνο τη διαφορά ανάμεσα στην αξία της εκτέλεσης και στη χονδρική.", "The pharmacy fee paid by the HIO is not in the GHS XML and is not included — this shows only the difference between the dispensing value and wholesale.")}</p>
         </div>
         <DateRangeFilter />
       </div>

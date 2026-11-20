@@ -23,25 +23,42 @@ router = APIRouter()
 _MODULE = "patient_analytics"
 
 
-def _repo(ctx: TenantContext) -> PatientIntelligenceRepository:
+async def _is_cy(ctx: TenantContext) -> bool:
+    from app.services.cy.gate import cy_enabled, tenant_country
+    return await tenant_country(ctx.tenant_id) == "CY" and await cy_enabled()
+
+
+async def _repo(ctx: TenantContext) -> PatientIntelligenceRepository:
+    """ΙΔΙΕΣ οθόνες για Ελλάδα & Κύπρο: ο κυπριακός repository κληρονομεί τον ελληνικό και αλλάζει
+    ΜΟΝΟ τις πηγές δεδομένων (ΓεΣΥ αντί ΗΔΥΚΑ) — βλ. repositories/cy_intelligence.py."""
+    if await _is_cy(ctx):
+        from app.repositories.cy_intelligence import CyPatientIntelligenceRepository
+        return CyPatientIntelligenceRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return PatientIntelligenceRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+
+
+async def _greek_only(ctx: TenantContext) -> None:
+    """Λειτουργίες που στηρίζονται σε ΑΜΚΑ/ΗΔΥΚΑ (σχόλια, G6PD, AI συμβουλή, πύλη με ΑΜΚΑ):
+    στην Κύπρο δεν υπάρχουν — 404, όπως κάθε ελληνικό κύκλωμα."""
+    if await _is_cy(ctx):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
 
 
 @router.get("/overview")
 async def overview(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).cached_view("overview")
+    return await (await _repo(ctx)).cached_view("overview")
 
 
 @router.get("/today")
 async def today(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).cached_view("today")
+    return await (await _repo(ctx)).cached_view("today")
 
 
 @router.get("/patients")
 async def patients(sort: str = Query("value"),
                    active_days: int | None = Query(None, ge=1, le=3650),
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).patients_table(sort=sort, active_days=active_days)
+    return await (await _repo(ctx)).patients_table(sort=sort, active_days=active_days)
 
 
 @router.get("/compliance")
@@ -50,37 +67,39 @@ async def compliance(regular_only: bool = False,
                      ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     """`regular_only`: μόνο τακτικοί (εκτελέσεις σε ≥6 μήνες του έτους). `lost_days`: μόνο όσοι
     έχουν επανάληψη που χάθηκε πριν από τόσες ημέρες (0 = όλοι)."""
-    return await _repo(ctx).compliance(regular_only=regular_only, lost_days=lost_days)
+    return await (await _repo(ctx)).compliance(regular_only=regular_only, lost_days=lost_days)
 
 
 @router.get("/recall")
 async def recall(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
+    if await _is_cy(ctx):
+        return await (await _repo(ctx)).recall()
     return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).recall()
 
 
 @router.get("/winback")
 async def winback(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).winback()
+    return await (await _repo(ctx)).winback()
 
 
 @router.get("/returns")
 async def returns(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).returns()
+    return await (await _repo(ctx)).returns()
 
 
 @router.get("/vip")
 async def vip(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).vip()
+    return await (await _repo(ctx)).vip()
 
 
 @router.get("/risk")
 async def risk(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).risk()
+    return await (await _repo(ctx)).risk()
 
 
 @router.get("/segments")
 async def segments(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).cached_view("segments")
+    return await (await _repo(ctx)).cached_view("segments")
 
 
 # ── 360° single-patient profile («Εικόνα Πελάτη», by ΑΜΚΑ) ──────────────────
@@ -94,7 +113,7 @@ async def profile(amka: str | None = Query(None),
     """360° profile by ΑΜΚΑ, με patient_id (από αναζήτηση ονόματος — δουλεύει και σε demo με
     masked ΑΜΚΑ), ή με barcode συνταγής (σάρωση στο φαρμακείο — χωρίς να ζητηθεί ΑΜΚΑ).
     date_from/date_to περιορίζουν ΜΟΝΟ διαγνώσεις/φάρμακα/segments (εστίαση AI)."""
-    return await _repo(ctx).patient_profile(amka=amka, patient_id=patient_id, barcode=barcode,
+    return await (await _repo(ctx)).patient_profile(amka=amka, patient_id=patient_id, barcode=barcode,
                                             date_from=date_from, date_to=date_to)
 
 
@@ -113,12 +132,15 @@ async def profile_advice(body: AdviceIn,
     """AI care/retention/lifestyle advice for ONE patient, from their 360° profile (ίδιο date scope).
     Αποθηκεύεται στη βάση· καλεί ξανά το AI ΜΟΝΟ όταν οι κλινικές συνθήκες (παθήσεις/φάρμακα/
     κατηγορίες/G6PD) έχουν αλλάξει — αλλιώς επιστρέφει τις αποθηκευμένες (ταχύτητα + μικρότερο κόστος)."""
+    # Κύπρος: ΙΔΙΑ λειτουργία (v CY 1.4.0) — υπογραφή/προφίλ από τον κυπριακό repository, αποθήκευση
+    # ΑΝΑ ΦΑΡΜΑΚΕΙΟ (advice_signature δεν επιστρέφει καθολικό κλειδί), κυπριακό πλαίσιο στο AI.
+    cy = await _is_cy(ctx)
     # AI entitlement: η συμβουλή είναι AI-feature → απαιτεί και το module ai_assistant (Pro), πέρα
     # από το patient_analytics gate του router.
     if ctx.modules.get("ai_assistant", "locked") == "locked":
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             detail={"error": "module_locked", "module": "ai_assistant"})
-    repo = _repo(ctx)
+    repo = await _repo(ctx)
 
     def _iso(d):
         return d.isoformat() if d else None
@@ -147,18 +169,23 @@ async def profile_advice(body: AdviceIn,
     # 2) MISS (ή force) → χτίσε το προφίλ ΜΟΝΟ για κλινικά (παθήσεις/φάρμακα/δημογραφικά), κάλεσε AI,
     # αποθήκευσε καθολικά. ΔΕΝ περνάμε στοιχεία-σχέσης φαρμακείου (επισκέψεις/αξία/VIP/συμμόρφωση) ώστε
     # η κοινή συμβουλή να μη διαρρέει δεδομένα ενός φαρμακείου σε άλλο.
-    prof = await repo.patient_profile(body.amka, date_from=body.date_from, date_to=body.date_to)
+    prof = await repo.patient_profile(body.amka, patient_id=pid if cy else None,
+                                      date_from=body.date_from, date_to=body.date_to)
     if not prof.get("found"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     p = prof["patient"]
     facts = {
         "ηλικιακή_ομάδα": p.get("age_group"), "φύλο": p.get("sex"),
         "θεραπευτικές_κατηγορίες": [s["label"] for s in prof["segments"]],
-        "παθήσεις": [f"{c['code']} {c.get('title') or ''}".strip() for c in prof["conditions"]],
+        ("θεραπευτικές_ομάδες_ATC" if cy else "παθήσεις"):
+            [f"{c['code']} {c.get('title') or ''}".strip() for c in prof["conditions"]],
         "βασικά_φάρμακα": [m["name"] for m in prof["medicines"][:8]],
-        "έλλειψη_ενζύμου_G6PD": "ΝΑΙ — προσοχή σε οξειδωτικά φάρμακα" if prof.get("clinical", {}).get("g6pd_deficiency") else "όχι",
+        # Κύπρος: δεν καταγράφεται G6PD → ΟΧΙ «όχι» (θα ήταν ψευδής βεβαιότητα)· απλώς παραλείπεται
+        "έλλειψη_ενζύμου_G6PD": (None if cy else "ΝΑΙ — προσοχή σε οξειδωτικά φάρμακα"
+                                 if prof.get("clinical", {}).get("g6pd_deficiency") else "όχι"),
     }
-    res = await patient_advice.advise(facts, ctx.tenant_id)
+    facts = {k: v for k, v in facts.items() if v is not None}
+    res = await patient_advice.advise(facts, ctx.tenant_id, country="CY" if cy else None)
     if not res.get("ok"):
         if cached and cached.get("advice", {}).get("ok"):    # AI κάτω → fallback στα αποθηκευμένα
             return {**cached["advice"], "cached": True, "stale": True, "generated_at": _iso(cached.get("generated_at"))}
@@ -179,19 +206,22 @@ class NoteIn(BaseModel):
 @router.get("/profile/notes")
 async def profile_notes(amka: str = Query(..., min_length=3),
                         ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return {"items": await _repo(ctx).list_notes(amka)}
+    await _greek_only(ctx)
+    return {"items": await (await _repo(ctx)).list_notes(amka)}
 
 
 @router.post("/profile/notes")
 async def add_profile_note(body: NoteIn,
                            ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).add_note(body.amka, body.text, ctx.user_id)
+    await _greek_only(ctx)
+    return await (await _repo(ctx)).add_note(body.amka, body.text, ctx.user_id)
 
 
 @router.delete("/profile/notes/{note_id}")
 async def delete_profile_note(note_id: str,
                               ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    return await _repo(ctx).delete_note(note_id)
+    await _greek_only(ctx)
+    return await (await _repo(ctx)).delete_note(note_id)
 
 
 # ── clinical flag: G6PD enzyme deficiency ───────────────────────────────────
@@ -203,7 +233,8 @@ class G6pdIn(BaseModel):
 @router.post("/profile/g6pd")
 async def set_g6pd(body: G6pdIn,
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    res = await _repo(ctx).set_g6pd(body.amka, body.g6pd_deficiency)
+    await _greek_only(ctx)
+    res = await (await _repo(ctx)).set_g6pd(body.amka, body.g6pd_deficiency)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, res.get("error", "patient_not_found"))
     return res
@@ -220,7 +251,8 @@ class PortalAccountIn(BaseModel):
 async def portal_account_status(amka: str, ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     """Έχει ήδη λογαριασμό πύλης αυτός ο πελάτης; Το παράθυρο «Λογαριασμός my.rxvision» το ρωτά ΠΡΩΤΑ,
     ώστε να λέει καθαρά «είναι ήδη εγγεγραμμένος → στείλε ξανά σύνδεσμο» αντί για «αποτυχία — ίσως…»."""
-    if not await _repo(ctx)._patient_by_amka(amka):
+    await _greek_only(ctx)
+    if not await (await _repo(ctx))._patient_by_amka(amka):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     from app.repositories.patient_portal import PatientAccountRepository
     from app.services.patient_auth_service import _mask_email
@@ -237,7 +269,8 @@ async def portal_account_status(amka: str, ctx: TenantContext = Depends(require(
 @router.post("/profile/portal-account")
 async def create_portal_account(body: PortalAccountIn,
                                 ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    pa = await _repo(ctx)._patient_by_amka(body.amka)
+    await _greek_only(ctx)
+    pa = await (await _repo(ctx))._patient_by_amka(body.amka)
     if not pa:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "patient_not_found")
     parts = (pa.get("full_name") or "").split()

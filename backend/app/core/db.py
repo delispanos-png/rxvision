@@ -107,6 +107,15 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("loyalty_members", [("tenant_id", 1), ("patient_ref", 1)], {"unique": True}),
     ("patient_measurements", [("tenant_id", 1), ("patient_ref", 1), ("kind", 1), ("at", -1)], {}),
     ("patient_ai_advice", [("tenant_id", 1), ("patient_ref", 1)], {"unique": True}),
+    # ΑΠΟΘΗΚΗ (pharmacy_products): ΕΛΕΙΠΑΝ εντελώς μέχρι 18/11/2026 — 131.000 είδη χωρίς κανένα
+    # ευρετήριο → κάθε αναζήτηση είδους διάβαζε ΟΛΗ τη συλλογή (Αποθήκη, e-shop, ενημέρωση καταλόγου:
+    # ~13 εγγραφές/δευτ.). Τα ερωτήματα είναι πάντα ανά φαρμακείο + barcode ή + όνομα (ταξινόμηση).
+    ("pharmacy_products", [("tenant_id", 1), ("barcode", 1)], {}),
+    ("pharmacy_products", [("tenant_id", 1), ("name", 1)], {}),
+    ("pharmacy_products", [("tenant_id", 1), ("type", 1)], {}),
+    # Κύπρος — κοινός κατάλογος ειδών PharmacyOne
+    ("cy_catalog_items", [("active", 1), ("raw.supergroup", 1)], {}),
+    ("cy_catalog_items", [("seen_at", 1)], {}),
     ("pharmacy_duties", [("tenant_id", 1), ("date", 1)], {}),
     ("pharmacy_exceptions", [("tenant_id", 1), ("date", 1)], {"unique": True}),
     ("prescription_executions", [("tenant_id", 1), ("executed_at", -1)], {}),

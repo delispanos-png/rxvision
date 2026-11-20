@@ -236,7 +236,8 @@ class ConnectRepository:
             return {"ok": False, "error": "self", "message": "Αυτό είναι το δικό σου ΑΦΜ."}
         if target in (g.get("members") or []):
             return {"ok": False, "error": "already", "message": "Είναι ήδη στο δίκτυο."}
-        block = await directory.join_block(target, module=MODULE, require_module=True)
+        block = (await directory.country_block(self.me, target)
+                 or await directory.join_block(target, module=MODULE, require_module=True))
         if block:
             return block
         if await self._db[INVITES].find_one({"group_id": gid, "to_tenant_id": target,

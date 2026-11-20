@@ -17,6 +17,7 @@ type Item = {
   patient_ref: string; patient_name: string | null; patient_dob: string | null; kind: "lost" | "leak";
   last_visit: string; days_since_visit: number; lost_prescriptions: number;
   value_at_stake_cents: number; monthly_value_cents: number; doctors: string[]; items: string[];
+  maybe_deceased?: boolean;   // υπόδειξη (80+, τακτικός, δεν ξαναήρθε) — ΠΟΤΕ αυτόματη σήμανση
 };
 type Resp = { summary: { lost: number; leak: number; monthly_value_cents: number; value_at_stake_cents: number };
   items: Item[]; lost_after_days: number };
@@ -75,6 +76,7 @@ export default function CyLostCustomersPage() {
                   <td className="px-4 py-2">
                     <Link href={`/cy/patients/${encodeURIComponent(r.patient_ref)}`} className="font-medium text-slate-800 hover:text-indigo-600 dark:text-slate-100">{r.patient_name || "—"}</Link>
                     <div className="text-xs text-slate-400">{age != null ? `${age} ${t("ετών", "yrs")}` : ""}{r.doctors.length ? ` · ${r.doctors.join(", ")}` : ""}</div>
+                    {r.maybe_deceased && <div className="mt-1 text-[11px] text-slate-500" title={t("Τακτικός πελάτης 80+ που δεν ξαναήρθε. Το σύστημα δεν το συμπεραίνει — σημείωσέ το μόνο αν το γνωρίζεις.", "A regular customer aged 80+ who has not returned. The system never assumes it — mark it only if you know.")}>🕊 {t("Αν γνωρίζεις ότι απεβίωσε, σημείωσέ το στην καρτέλα.", "If you know they passed away, mark it on the card.")}</div>}
                   </td>
                   <td className="px-4 py-2">
                     {r.kind === "lost"

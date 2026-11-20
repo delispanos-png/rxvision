@@ -41,7 +41,14 @@ SCHEMA = {
 }
 
 
-async def advise(facts: dict, tenant_id: str | None = None) -> dict:
+# Κύπρος: ίδια οδηγία, άλλη χώρα· στο XML ΓεΣΥ δεν υπάρχουν διαγνώσεις ICD-10 — οι «παθήσεις» είναι
+# θεραπευτικές ομάδες ATC από τα φάρμακα (ΟΧΙ διαγνώσεις γιατρού).
+SYSTEM_CY = (SYSTEM.replace("στην Ελλάδα", "στην Κύπρο (ΓεΣΥ)")
+             .replace("παθήσεις ICD-10", "θεραπευτικές ομάδες ATC από τα φάρμακα — ΟΧΙ διαγνώσεις")
+             + " Μην αναφέρεις ΕΟΦ, ΕΟΠΥΥ, ΗΔΥΚΑ ή ελληνικούς φορείς.")
+
+
+async def advise(facts: dict, tenant_id: str | None = None, *, country: str | None = None) -> dict:
     c = await pharmacat_service._config()
     if not c["api_key"]:
         return {"ok": False, "error": "not_configured"}
@@ -62,7 +69,7 @@ async def advise(facts: dict, tenant_id: str | None = None) -> dict:
     prompt = "ΕΙΚΟΝΑ ΠΕΛΑΤΗ:\n" + json.dumps(facts, ensure_ascii=False, indent=2)
     try:
         resp = await client.messages.create(
-            model=c["model"], max_tokens=3000, system=ai_cost.cached_system(SYSTEM),
+            model=c["model"], max_tokens=3000, system=ai_cost.cached_system(SYSTEM_CY if country == "CY" else SYSTEM),
             messages=[{"role": "user", "content": prompt}], output_config=out_cfg)
     except anthropic.APIStatusError as e:
         return {"ok": False, "error": f"api_error:{e.status_code}"}

@@ -8,7 +8,7 @@ import {
   Settings, Sparkles, Stethoscope, TrendingUp, Target, Users, Brain, ShieldCheck, Tags, Syringe, Bot,
   Gift, BookOpen, ScrollText, Truck, Lock, UserPlus, Ticket, SlidersHorizontal, Heart, FileText,
   MessageSquare, PackageCheck, ArrowRightLeft, Compass, Handshake, Home, Inbox, Send, RefreshCw,
-  Store, LifeBuoy, ShoppingBag, Building2, Eye, Headset, type LucideIcon } from "lucide-react";
+  Store, LifeBuoy, ShoppingBag, Building2, Eye, Headset, Wallet, type LucideIcon } from "lucide-react";
 
 // A leaf (direct link). `module` gates visibility (shown only when enabled/trial).
 export type Leaf = { href: string; label: string; en: string; module?: string | string[];
@@ -97,9 +97,6 @@ export const NAV_GROUPS: Group[] = [
       { href: "/eshop-fees", label: "Προμήθειες συναλλαγών", en: "Transaction fees" },
     ] },
   ] },
-  { title: "Παραγγελία", en: "Ordering", icon: PackageSearch, items: [
-    { label: "Πρόταση παραγγελίας", en: "Reorder suggestion", icon: PackageSearch, href: "/cy/reorder", tip: "Τι θα ζητηθεί τις επόμενες ημέρες από τις ανοιχτές συνταγές, τι έλειψε, και τι απόθεμα έχεις.", tip_en: "What will be asked for in the coming days from open prescriptions, what ran out, and your stock." },
-  ] },
   { title: "Διαχείριση φαρμακείου", en: "Pharmacy management", icon: Building2, items: [
     { section: EXEC, label: "Dashboard", en: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
     // Τα ΙΔΙΑ modules με πριν: όποιος έβλεπε τη λίστα ασθενών δεν τη χάνει με την αναδιάταξη.
@@ -179,30 +176,53 @@ const pickFrom = (titles: string[]): Node[] => NAV_GROUPS
     return kids.length ? [{ ...n, children: kids }] : [];
   }));
 export const CY_NAV_GROUPS: Group[] = [
+  // «Ο Σύμβουλός σου»: ίδια οθόνη, σήματα ΓεΣΥ (backend repositories/cy_daily_coach.py)
+  ...NAV_GROUPS.filter((g) => g.title === "Ο Σύμβουλός σου"),
   // ΙΔΙΕΣ ομάδες με το ελληνικό μενού (ίδιοι τίτλοι → ο φαρμακοποιός που ξέρει το ένα βρίσκει το άλλο)
   { title: "Εξυπηρέτηση πάγκου", en: "Counter service", icon: Store, items: [
+    { label: "Patient Intelligence", en: "Patient Intelligence", icon: Brain, href: "/intelligence", module: "patient_analytics", tip: "Ποιοι πελάτες σου χρειάζονται προσοχή και γιατί: ποιοι αναμένονται, ποιοι δεν είναι συνεπείς, ποιοι χάνονται, οι VIP.", tip_en: "Which customers need attention and why: who is due, who is not on track, who is being lost, your VIPs." },
+    { label: "Προχορηγήσεις", en: "Advance dispensings", icon: ArrowRightLeft, href: "/cy/loans", module: "advance_dispensing", tip: "Σκευάσματα που δίνεις πριν εκτελεστεί η συνταγή ΓεΣΥ, και η ξεχρέωσή τους όταν εκτελεστεί.", tip_en: "Products you give before the GHS prescription is dispensed, and clearing them once it is." },
+    { label: "Διατροφή", en: "Nutrition", icon: Salad, href: "/nutrition", module: ["nutrition", "ai_assistant"], tip: "Πρόταση διατροφής από τα φάρμακα και τις μετρήσεις του πελάτη.", tip_en: "A nutrition proposal from the customer's medicines and measurements." },
     { label: "Ανοιχτές συνταγές", en: "Open prescriptions", icon: CalendarClock, href: "/cy/open", tip: "Ποιος πρέπει να έρθει για την επόμενη φάση της συνταγής του και πότε.", tip_en: "Who should come for the next step of their prescription, and when." },
     { label: "Χαμένοι πελάτες", en: "Lost customers", icon: UserPlus, href: "/cy/lost", tip: "Πελάτες που δεν ήρθαν για συνταγή που έπρεπε να συνεχιστεί, και πόσο αξίζουν.", tip_en: "Customers who did not come back for a prescription that should have continued, and what they are worth." },
-    { label: "Προχορηγήσεις", en: "Advance dispensings", icon: ArrowRightLeft, href: "/cy/loans", module: "advance_dispensing", tip: "Σκευάσματα που δίνεις πριν εκτελεστεί η συνταγή ΓεΣΥ, και η ξεχρέωσή τους όταν εκτελεστεί.", tip_en: "Products you give before the GHS prescription is dispensed, and clearing them once it is." },
+    { label: "Θεραπείες με Επανάληψη", en: "Repeat therapies", icon: RefreshCw, href: "/therapies", module: "therapy_programs", tip: "Θεραπείες που επαναλαμβάνονται κάθε λίγους μήνες (π.χ. Prolia): ποιος καθυστέρησε και πόσο, από τις εκτελέσεις ΓεΣΥ.", tip_en: "Therapies repeated every few months (e.g. Prolia): who is overdue and by how much, from GHS dispensings." },
     { label: "Αναλώσιμα & διαβητικοί", en: "Consumables & diabetics", icon: Activity, href: "/cy/consumables", tip: "Ποιοι παίρνουν ταινίες/σκαρφιστήρες και ποιοι άργησαν για τα επόμενα.", tip_en: "Who receives strips/lancets and who is late for the next supply." },
   ] },
   { title: "Έλεγχος συνταγών", en: "Prescription control", icon: ShieldCheck, items: [
     { label: "Εκτελέσεις", en: "Dispensings", icon: BarChart3, href: "/cy/dispensings", tip: "Όλες οι εκτελέσεις ΓεΣΥ της περιόδου, με αναζήτηση και λεπτομέρεια ανά εκτέλεση.", tip_en: "All GHS dispensings in the period, with search and per-dispensing detail." },
     { label: "Είδη που δεν δόθηκαν", en: "Items not dispensed", icon: PackageSearch, href: "/cy/not-dispensed", tip: "Σκευάσματα της συνταγής που δεν δόθηκαν: πιθανή έλλειψη ή χαμένη πώληση.", tip_en: "Prescribed products that were not given: likely stock-out or lost sale." },
+    { label: "Μηνιαία απαίτηση ΟΑΥ", en: "Monthly HIO claim", icon: Wallet, href: "/cy/claim", tip: "Πόσα περιμένεις να πληρωθείς από τον ΟΑΥ κάθε μήνα, με τη λίστα εκτελέσεων για έλεγχο της εκκαθάρισης.", tip_en: "What you expect from the HIO each month, with the dispensing list to check the settlement." },
     { label: "Διαφορά τιμής (PC2)", en: "Price difference (PC2)", icon: Tags, href: "/cy/pc2", tip: "Όσα πληρώνουν οι πελάτες πάνω από την τιμή αναφοράς του ΟΑΥ.", tip_en: "What customers pay above the HIO reference price." },
     { label: "Ανάκληση παρτίδας", en: "Batch recall", icon: ShieldCheck, href: "/cy/recall", tip: "Ποιοι πελάτες πήραν μια συγκεκριμένη παρτίδα.", tip_en: "Which customers received a specific batch." },
     { label: "Εισαγωγή XML", en: "XML import", icon: Inbox, href: "/cy/import", tip: "Ανέβασε τα XML εκτελέσεων από την πύλη ΓεΣΥ (ένα-ένα ή σε ZIP).", tip_en: "Upload dispensing XML files from the GHS portal (one by one or as a ZIP)." },
+  ] },
+  { title: "Παραγγελία", en: "Ordering", icon: PackageSearch, items: [
+    { label: "Πρόταση παραγγελίας", en: "Reorder suggestion", icon: PackageSearch, href: "/cy/reorder", tip: "Τι θα ζητηθεί τις επόμενες ημέρες από τις ανοιχτές συνταγές, τι έλειψε, και τι απόθεμα έχεις.", tip_en: "What will be asked for in the coming days from open prescriptions, what ran out, and your stock." },
   ] },
   { title: "Διαχείριση φαρμακείου", en: "Pharmacy management", icon: Building2, items: [
     { section: EXEC, label: "Dashboard", en: "Dashboard", icon: LayoutDashboard, href: "/cy", tip: "Η εικόνα του φαρμακείου: εκτελέσεις, αξία, ΟΑΥ, πελάτες, ώρες αιχμής, με σύγκριση με πέρσι.", tip_en: "Your pharmacy at a glance: dispensings, value, HIO, customers, peak hours, compared with last year." },
     { section: EXEC, label: "Πελάτες", en: "Customers", icon: Users, href: "/cy/patients", tip: "Αναζήτηση πελάτη και άνοιγμα της καρτέλας του.", tip_en: "Find a customer and open their card." },
     { section: EXEC, label: "Ιατροί", en: "Doctors", icon: Stethoscope, href: "/cy/doctors", tip: "Ποιοι γιατροί συνταγογραφούν στους πελάτες σου και τι αξία φέρνουν.", tip_en: "Which doctors prescribe for your customers and what value they bring." },
+    { section: EXEC, label: "Οικογένειες", en: "Families", icon: Users, href: "/patients/families", tip: "Οικογένειες πελατών: τι πήρε και τι εκκρεμεί για κάθε μέλος, σε μία οθόνη.", tip_en: "Customer families: what each member got and what is pending, on one screen.", module: "family_groups" },
+    { section: EXEC, label: "Δομές φροντίδας", en: "Care structures", icon: Home, href: "/care", module: "care_homes", tip: "Γηροκομεία και δομές: τι ανοίγει για κάθε τρόφιμο, οδηγίες λήψης και λογαριασμός συμμετοχών.", tip_en: "Care homes: what is due for each resident, intake instructions and the copay account." },
     { section: EXEC, label: "Κερδοφορία", en: "Profitability", icon: TrendingUp, href: "/cy/profitability", module: "profitability", tip: "Κέρδος ανά σκεύασμα: έσοδα χωρίς ΦΠΑ μείον χονδρική από την Αποθήκη.", tip_en: "Profit per product: revenue excl. VAT minus wholesale from the Warehouse." },
     { section: EXEC, label: "Υπάλληλοι", en: "Staff", icon: Users, href: "/cy/staff", tip: "Εκτελέσεις ανά χρήστη της πύλης ΓεΣΥ.", tip_en: "Dispensings per GHS portal user." },
     ...pickFrom(["Διαχείριση φαρμακείου"]),
   ] },
+  // Copilot & Ρουτίνες: ίδιες οθόνες, εργαλεία δεδομένων ΓεΣΥ (backend services/cy/copilot.py)
+  { title: "AI σύμβουλοι", en: "AI advisors", icon: Sparkles, items: [
+    { label: "AI σύμβουλος", en: "AI Assistant", icon: Bot, module: "ai_assistant", children: [
+      { href: "/copilot", label: "Συνομιλία", en: "Chat", tip: "Ρώτα για εκτελέσεις, γιατρούς, φάσεις, παραγγελία — απαντά με τα δικά σου δεδομένα ΓεΣΥ.", tip_en: "Ask about dispensings, doctors, steps, ordering — answered from your own GHS data." },
+      { href: "/copilot/routines", label: "Ρουτίνες", en: "Routines", tip: "Αναφορές ή μηνύματα που φεύγουν μόνα τους σε πρόγραμμα.", tip_en: "Reports or messages sent on a schedule." },
+    ] },
+  ] },
   { title: "Marketing", en: "Marketing", icon: Megaphone, items: [
+    // ΙΔΙΕΣ οθόνες με την Ελλάδα, δεδομένα ΓεΣΥ (backend services/cy/marketing.py)
+    { label: "Dashboard", en: "Dashboard", icon: Megaphone, href: "/marketing", module: "marketing", tip: "Τι έστειλες, σε πόσους, και έτοιμες προτάσεις: ποιους να θυμίσεις, ποιους να φροντίσεις, ποιους να φέρεις πίσω.", tip_en: "What you sent, to how many, and ready suggestions: whom to remind, care for, or win back." },
+    { label: "Θεραπευτικές κατηγορίες", en: "Therapeutic categories", icon: Target, href: "/marketing/categories", module: "marketing", tip: "Πόσοι πελάτες σου ανά θεραπεία (διαβήτης, πίεση, χοληστερίνη…), από τα φάρμακα που παίρνουν.", tip_en: "How many customers per therapy (diabetes, blood pressure, cholesterol…), from the medicines they take." },
     { label: "Καμπάνιες", en: "Campaigns", icon: Mail, href: "/cy/campaigns", tip: "Στείλε SMS, Viber, email ή ειδοποίηση πύλης σε μια ομάδα πελατών, μόνο σε όσους έδωσαν συγκατάθεση.", tip_en: "Send SMS, Viber, email or a portal notification to a group of customers, only to those who consented." },
+    { label: "Αυτοματοποιημένες", en: "Automated", icon: RefreshCw, href: "/communications/automations", tip: "Μηνύματα που φεύγουν μόνα τους τη σωστή στιγμή για τον καθένα.", tip_en: "Messages sent automatically at the right moment for each customer." },
+    { label: "Ημερολόγιο", en: "Calendar", icon: CalendarClock, href: "/communications/calendar", tip: "Πόσα μηνύματα στέλνεις και πότε — για να μην κουράζεις τους πελάτες σου.", tip_en: "How many messages you send and when — so you don't tire your customers." },
     ...pickFrom(["Marketing"]),
   ] },
   { title: "Πύλη πελατών & Πιστότητα", en: "Portal & Loyalty", icon: Heart, items: pickFrom(["Πύλη πελατών & Πιστότητα"]) },

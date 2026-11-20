@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useIdLabel } from "@/lib/cy";
 import { Phone, MessageSquare, Mail, PhoneCall, Users, AlertTriangle, Wallet, Pill, ExternalLink } from "lucide-react";
 import { fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
@@ -32,6 +33,7 @@ type RecallDetail = { found: boolean; name?: string | null; amka?: string | null
 
 export function RecallSection() {
   const t = useT();
+  const idLabel = useIdLabel();
   const router = useRouter();
   const q = useQuery({ queryKey: ["recall"], queryFn: () => api<Recall>("/advisor/recall"), retry: false });
   const [sel, setSel] = useState<RecallPat | null>(null);
@@ -77,7 +79,7 @@ export function RecallSection() {
     <PanelCard title={t("📞 Λίστα Recall — ασθενείς με χαμένες/διαθέσιμες επαναλήψεις", "📞 Recall list — patients with missed/available repeats")} defaultOpen
       action={<ExportMenu filename="lista-recall" title={t("Λίστα Recall", "Recall list")} rows={d.items} columns={[
         { key: "name", header: t("Ασθενής", "Patient"), value: (r) => r.name || r.amka || "" },
-        { key: "amka", header: "ΑΜΚΑ" },
+        { key: "amka", header: idLabel },
         { key: "available", header: t("Διαθέσιμες τώρα", "Available now") },
         { key: "missed", header: t("Χαμένες", "Missed") },
         { key: "value", header: t("Αξία ρίσκου (€)", "Value at risk (€)"), value: (r) => fmtMoney(r.value) },

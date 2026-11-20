@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.repositories.cy import CyDispensingRepository, CyPatientRepository
@@ -52,7 +52,8 @@ async def patient_card(tenant_id: str, ref: str, *, today: date | None = None) -
         **await _profile(tenant_id, ref, disp, cs, totals["total"], today),
         "patient": {"ref": ref, "full_name": p.get("full_name"), "gender": p.get("gender"),
                     "dob": p.get("dob"), "hio_code": p.get("hio_code"),
-                    "first_seen": p.get("first_seen"), "last_seen": p.get("last_seen")},
+                    "first_seen": p.get("first_seen"), "last_seen": p.get("last_seen"),
+                    "deceased_at": (p.get("deceased") or {}).get("at")},
         "flags": {"exemption": exemption(disp), "diabetic": is_diabetic(disp)},
         "totals": {**totals, "visits": len(disp)},
         "doctors": sorted(doctors.values(), key=lambda x: -x["visits"]),
@@ -331,7 +332,6 @@ async def reorder(tenant_id: str, *, horizon: int = 14, today: date | None = Non
     - **Έλειψε:** γραμμές με QtyDisp 0 τις τελευταίες 30 ημέρες (πιθανή έλλειψη αποθέματος).
     - **Απόθεμα:** από την Αποθήκη, αν το είδος υπάρχει εκεί με το ίδιο barcode.
     Πρόταση = αναμενόμενα − απόθεμα (ποτέ αρνητικό). Δεν παραγγέλνει τίποτα μόνο του."""
-    from app.core.db import shared_db
     today = today or datetime.now(tz=ch.TZ).date()
     cs = [c for c in await ch.chains(tenant_id, today=today)
           if c["status"] in ("soon", "upcoming", "late") and c["days_to_due"] <= horizon]
@@ -340,7 +340,8 @@ async def reorder(tenant_id: str, *, horizon: int = 14, today: date | None = Non
 
     def _slot(ln: dict) -> dict[str, Any]:
         k = ln.get("barcode") or ln.get("code") or ln.get("description")
-        return need.setdefault(k, {"key": k, "barcode": ln.get("barcode"), "description": ln.get("description"),
+        return need.setdefault(k, {"key": k, "barcode": ln.get("barcode"), "code": ln.get("code"),
+                                   "description": ln.get("description"),
                                    "kind": ln.get("kind"), "expected": 0, "patients": set(), "missed_30d": 0})
     if cs:
         last = await repo.aggregate([
@@ -356,18 +357,111 @@ async def reorder(tenant_id: str, *, horizon: int = 14, today: date | None = Non
     for r in await repo.aggregate([{"$match": {"dispensed_at": {"$gte": since}}}, {"$unwind": "$lines"},
                                    {"$match": {"lines.qty_disp": 0}}, {"$project": {"_id": 0, "l": "$lines"}}]):
         _slot(r["l"])["missed_30d"] += int(r["l"].get("qty_presc") or 0)
-    barcodes = [v["barcode"] for v in need.values() if v["barcode"]]
-    stock = {}
-    if barcodes:
-        async for p in shared_db()["pharmacy_products"].find(  # tenant-ok: tenant_id στο φίλτρο
-                {"tenant_id": tenant_id, "barcode": {"$in": barcodes}}, {"barcode": 1, "stock_qty": 1}):
-            stock[p["barcode"]] = p.get("stock_qty")
+    # Αποθήκη: ΕΝΑΣ ορισμός ταιριάσματος (barcode με/χωρίς 0, κωδικός ΓεΣΥ) — services/cy/warehouse.py
+    from app.services.cy import warehouse
+    wh = await warehouse.lookup(tenant_id, list(need.values()), fields=("stock_qty", "suppliers", "name"))
     items = []
+    basket: dict = {}
     for v in need.values():
-        st = stock.get(v["barcode"]) if v["barcode"] else None
-        items.append({**v, "patients": len([x for x in v["patients"] if x]), "stock": st,
-                      "suggested": max(0, v["expected"] - (st or 0)) if st is not None else v["expected"]})
+        prod = wh.get(v.get("barcode"), v.get("code"))
+        st = (prod or {}).get("stock_qty")
+        suggested = max(0, v["expected"] - (st or 0)) if st is not None else v["expected"]
+        sup = compare_suppliers((prod or {}).get("suppliers") or [])
+        best = sup[0] if sup else None
+        worst = max((x["wholesale_cents"] for x in sup), default=None)
+        items.append({**v, "patients": len([x for x in v["patients"] if x]), "stock": st, "suggested": suggested,
+                      "suppliers": sup, "best_supplier": best["name"] if best else None,
+                      "best_cents": best["wholesale_cents"] if best else None,
+                      # πόσα γλιτώνεις αν πάρεις από τον φθηνότερο αντί για τον ακριβότερο
+                      "saving_cents": ((worst - best["wholesale_cents"]) * suggested) if best and worst else 0})
+        for x in sup:
+            if suggested and x["available"]:
+                b = basket.setdefault(x["name"], {"supplier": x["name"], "items": 0, "cost_cents": 0, "cheapest": 0})
+                b["items"] += 1
+                b["cost_cents"] += x["wholesale_cents"] * suggested
+                b["cheapest"] += 1 if best and x["name"] == best["name"] else 0
     items.sort(key=lambda x: (-x["suggested"], -x["missed_30d"], x["description"] or ""))
     return {"horizon_days": horizon, "items": items,
+            "baskets": sorted(basket.values(), key=lambda b: (-b["items"], b["cost_cents"])),
             "summary": {"products": len(items), "units": sum(i["suggested"] for i in items),
-                        "with_stock_info": sum(1 for i in items if i["stock"] is not None)}}
+                        "with_stock_info": sum(1 for i in items if i["stock"] is not None),
+                        "with_suppliers": sum(1 for i in items if i["suppliers"]),
+                        "best_cost_cents": sum((i["best_cents"] or 0) * i["suggested"] for i in items),
+                        "saving_cents": sum(i["saving_cents"] for i in items)}}
+
+
+def compare_suppliers(suppliers: list[dict]) -> list[dict]:
+    """Προμηθευτές ενός είδους (από τον κατάλογο PharmacyOne), ΦΘΗΝΟΤΕΡΟΣ ΠΡΩΤΑ ανάμεσα σε όσους το
+    έχουν διαθέσιμο. «Διαθέσιμο» = απόθεμα > 0 ή άγνωστο (ο χονδρέμπορος δεν το δηλώνει) — μηδέν
+    σημαίνει «δεν έχει» και πάει στο τέλος. Χωρίς χονδρική, ο προμηθευτής δεν συγκρίνεται."""
+    out = []
+    for x in suppliers:
+        if not x.get("wholesale_cents"):
+            continue
+        out.append({"name": x.get("name"), "code": x.get("code"), "wholesale_cents": int(x["wholesale_cents"]),
+                    "stock": x.get("stock"), "offer": x.get("offer"),
+                    "available": x.get("stock") is None or (x.get("stock") or 0) > 0})
+    out.sort(key=lambda x: (not x["available"], x["wholesale_cents"], x["name"] or ""))
+    return out
+
+
+
+
+async def hio_claim(tenant_id: str, *, month: str | None = None, today: date | None = None) -> dict[str, Any]:
+    """Μηνιαία απαίτηση προς τον ΟΑΥ — για να ελέγξει ο φαρμακοποιός την πληρωμή που θα λάβει.
+
+    - `months`: οι τελευταίοι 12 μήνες: εκτελέσεις, συνταγές, αξία, ποσό ΟΑΥ, συμμετοχή, PC2.
+    - `month`: ο επιλεγμένος μήνας ανά είδος (φάρμακο/αναλώσιμο) + οι εκτελέσεις του, ΧΩΡΙΣ στοιχεία
+      πελάτη (για συμφωνία με την εκκαθάριση χρειάζονται μόνο οι αριθμοί εκτέλεσης/συνταγής).
+    - `resent`: εκτελέσεις που ξαναστάλθηκαν με αλλαγές (versions > 1) — εκεί συνήθως κρύβεται
+      η διαφορά ανάμεσα σε ό,τι περιμένεις και σε ό,τι πληρώνεσαι.
+    Μήνας = ώρα Κύπρου (ίδια ζώνη με τις υπόλοιπες οθόνες)."""
+    today = today or datetime.now(tz=ch.TZ).date()
+    first = today.replace(day=1)
+    start = (first - timedelta(days=366)).replace(day=1)
+    repo = CyDispensingRepository(tenant_id=tenant_id)
+    rows = await repo.aggregate([
+        {"$match": {"dispensed_at": {"$gte": datetime.combine(start, datetime.min.time(), tzinfo=ch.TZ)}}},
+        {"$project": {"dispensed_at": 1, "prescription_id": 1, "dispensing_id": 1, "kind": 1, "totals": 1,
+                      "versions": 1, "instance": 1, "instances": 1}}])
+    months: dict[str, dict[str, Any]] = {}
+    sel = month or first.strftime("%Y-%m")
+    detail: list[dict] = []
+
+    def _acc(b: dict, r: dict) -> None:
+        t = r.get("totals") or {}
+        b["dispensings"] += 1
+        b["_rx"].add(r.get("prescription_id"))
+        for k in ("total", "hio", "copay", "pc2", "beneficiary"):
+            b[k] += int(t.get(k) or 0)
+        if int(r.get("versions") or 1) > 1:
+            b["resent"] += 1
+
+    def _new(key: str) -> dict:
+        return {"month": key, "dispensings": 0, "_rx": set(), "total": 0, "hio": 0, "copay": 0, "pc2": 0,
+                "beneficiary": 0, "resent": 0}
+    by_kind: dict[str, dict] = {}
+    for r in rows:
+        at = r["dispensed_at"]
+        at = (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(ch.TZ)
+        m = at.strftime("%Y-%m")
+        _acc(months.setdefault(m, _new(m)), r)
+        if m == sel:
+            _acc(by_kind.setdefault(r.get("kind") or "drug", _new(r.get("kind") or "drug")), r)
+            t = r.get("totals") or {}
+            detail.append({"dispensing_id": r.get("dispensing_id"), "prescription_id": r.get("prescription_id"),
+                           "date": at.strftime("%Y-%m-%d"), "kind": r.get("kind"),
+                           "phase": f"{r.get('instance') or 1}/{r.get('instances') or 1}",
+                           "total": int(t.get("total") or 0), "hio": int(t.get("hio") or 0),
+                           "copay": int(t.get("copay") or 0), "pc2": int(t.get("pc2") or 0),
+                           "resent": int(r.get("versions") or 1) > 1})
+
+    def _out(b: dict) -> dict:
+        return {**{k: v for k, v in b.items() if k != "_rx"}, "prescriptions": len(b["_rx"] - {None})}
+    detail.sort(key=lambda d: (d["date"], d["dispensing_id"] or ""))
+    cur = months.get(sel)
+    return {"month": sel, "current_month": first.strftime("%Y-%m"),
+            "months": [_out(b) for b in sorted(months.values(), key=lambda b: b["month"], reverse=True)],
+            "selected": _out(cur) if cur else None,
+            "by_kind": [_out(b) for b in by_kind.values()],
+            "dispensings": detail, "partial": sel == first.strftime("%Y-%m")}

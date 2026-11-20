@@ -212,7 +212,34 @@ def _scrub_amka(obj):
     return obj
 
 
+async def _is_cy(tenant_id: str) -> bool:
+    from app.services.cy.gate import tenant_country
+    return await tenant_country(tenant_id) == "CY"
+
+
 async def _read_tool(name: str, args: dict, tenant_id: str, demo: bool = False) -> dict:
+    """ΕΝΑ σημείο απόφασης χώρας για ΟΛΑ τα δεδομένα του Copilot (συνομιλία, ρουτίνες, πλάνο)."""
+    if await _is_cy(tenant_id):
+        from app.services.cy import copilot as cy_copilot
+        return await cy_copilot.read_tool(name, args, tenant_id, demo=demo)
+    return await _read_tool_gr(name, args, tenant_id, demo=demo)
+
+
+async def report_tools(tenant_id: str) -> dict:
+    if await _is_cy(tenant_id):
+        from app.services.cy import copilot as cy_copilot
+        return cy_copilot.REPORT_TOOLS
+    return REPORT_TOOLS
+
+
+async def server_actions(tenant_id: str) -> dict:
+    if await _is_cy(tenant_id):
+        from app.services.cy import copilot as cy_copilot
+        return cy_copilot.server_actions()
+    return SERVER_ACTIONS
+
+
+async def _read_tool_gr(name: str, args: dict, tenant_id: str, demo: bool = False) -> dict:
     from app.repositories.prescriptions import PrescriptionRepository
     mb = _as_int(args.get("months_back"), 1)
     if name == "get_kpis":
@@ -576,7 +603,7 @@ async def summarize_report(tenant_id: str, title: str, tool: str, data: dict) ->
 _TOOL_PERM = {"list_prescriptions": "prescriptions:read"}
 
 
-def _tools(perms: set[str] | None = None) -> list[dict]:
+def _tools(perms: set[str] | None = None, *, cy: bool = False) -> list[dict]:
     common = {"type": "object", "properties": {
         "months_back": {"type": "integer"}, "days_back": {"type": "integer", "description": "Ημερήσιο εύρος: 0=ΣΗΜΕΡΑ, 1=χθες. Υπερισχύει του months_back."},
         "dim": {"type": "string", "enum": ["doctors", "products", "icd10", "patients"]}, "limit": {"type": "integer"},
@@ -597,8 +624,20 @@ def _tools(perms: set[str] | None = None) -> list[dict]:
         need = _TOOL_PERM.get(n)
         return need is None or perms is None or need in perms or "*" in perms
 
-    tools = [{"name": n, "description": _READ_DESC[n], "input_schema": common}
-             for n in _READ_NAMES if _allowed(n)]
+    if cy:
+        from app.services.cy import copilot as cy_copilot
+        names, desc = cy_copilot.READ_NAMES, cy_copilot.READ_DESC
+        actions_enum = list(cy_copilot.server_actions().keys())
+        report_enum, seg_enum = list(cy_copilot.REPORT_TOOLS), list(cy_copilot.MESSAGE_SEGMENTS)
+        common = {**common, "properties": {**common["properties"],
+                  "dim": {"type": "string", "enum": ["doctors", "products", "patients"]},
+                  "status": {"type": "string", "enum": ["soon", "late", "lost", "upcoming"]}}}
+    else:
+        names, desc = _READ_NAMES, _READ_DESC
+        actions_enum = list(SERVER_ACTIONS.keys())
+        report_enum, seg_enum = list(REPORT_TOOLS.keys()), ["all", "upcoming", "inactive", "icd", "substance"]
+    tools = [{"name": n, "description": desc[n], "input_schema": common}
+             for n in names if _allowed(n)]
     tools.append({"name": "open_screen", "description": "Κουμπί που ανοίγει σελίδα του προγράμματος.",
                   "input_schema": {"type": "object", "properties": {
                       "href": {"type": "string"}, "label": {"type": "string"}},
@@ -606,7 +645,7 @@ def _tools(perms: set[str] | None = None) -> list[dict]:
     tools.append({"name": "propose_action",
                   "description": "Πρότεινε ενέργεια που χρειάζεται επιβεβαίωση χρήστη πριν εκτελεστεί.",
                   "input_schema": {"type": "object", "properties": {
-                      "action": {"type": "string", "enum": list(SERVER_ACTIONS.keys())},
+                      "action": {"type": "string", "enum": actions_enum},
                       "summary": {"type": "string"},
                       "params": {"type": "object", "properties": {
                           "date_from": {"type": "string"}, "date_to": {"type": "string"},
@@ -619,7 +658,7 @@ def _tools(perms: set[str] | None = None) -> list[dict]:
                   "input_schema": {"type": "object", "properties": {
                       "name": {"type": "string", "description": "Σύντομος τίτλος."},
                       "action": {"type": "string", "enum": ["report", "message"], "description": "Τύπος ρουτίνας."},
-                      "report_tool": {"type": "string", "enum": list(REPORT_TOOLS.keys())},
+                      "report_tool": {"type": "string", "enum": report_enum},
                       "report_args": {"type": "object", "properties": {
                           "dim": {"type": "string", "enum": ["doctors", "products", "icd10", "patients"]},
                           "days_back": {"type": "integer"}, "months_back": {"type": "integer"},
@@ -628,7 +667,7 @@ def _tools(perms: set[str] | None = None) -> list[dict]:
                       "channel": {"type": "string", "enum": ["sms", "viber", "email"]},
                       "message": {"type": "string", "description": "Κείμενο μηνύματος ({name}/{first} → όνομα)."},
                       "subject": {"type": "string", "description": "Θέμα (μόνο email)."},
-                      "segment": {"type": "string", "enum": ["all", "upcoming", "inactive", "icd", "substance"]},
+                      "segment": {"type": "string", "enum": seg_enum},
                       "value": {"type": "string", "description": "Παράμετρος segment (π.χ. ημέρες/κωδικός)."},
                       "mode": {"type": "string", "enum": ["draft", "auto"], "description": "draft=έγκριση κάθε φορά (DEFAULT)."},
                       "max_recipients": {"type": "integer", "description": "Όριο παραληπτών για auto."},
@@ -652,6 +691,9 @@ async def status() -> dict:
 async def build_action_plan(*, tenant_id: str, perms: set[str], demo: bool = False) -> dict:
     """Proactive «Πλάνο Ημέρας»: gather live signals from the read tools → a prioritised list of
     action cards, each either directly EXECUTABLE (whitelisted action) or a deep-link to act on."""
+    if await _is_cy(tenant_id):
+        from app.services.cy import copilot as cy_copilot
+        return await cy_copilot.action_plan(tenant_id, perms, demo=demo)
     cards: list[dict] = []
 
     async def _safe(coro, default):
@@ -701,7 +743,7 @@ async def build_action_plan(*, tenant_id: str, perms: set[str], demo: bool = Fal
 
 
 async def execute_action(*, tenant_id: str, perms: set[str], action: str, params: dict | None = None) -> dict:
-    spec = SERVER_ACTIONS.get(action)
+    spec = (await server_actions(tenant_id)).get(action)
     if not spec:
         return {"ok": False, "error": "unknown_action"}
     if spec["perm"] not in perms and "*" not in perms:
@@ -720,7 +762,7 @@ async def _handle_tool(name, args, tenant_id, perms, actions, demo=False) -> dic
             return {"ok": True, "shown": True}
         return {"ok": False, "error": "bad_href"}
     if name == "propose_action":
-        action = args.get("action", ""); spec = SERVER_ACTIONS.get(action)
+        action = args.get("action", ""); spec = (await server_actions(tenant_id)).get(action)
         if not spec:
             return {"ok": False, "error": "unknown_action"}
         if spec["perm"] not in perms and "*" not in perms:
@@ -747,9 +789,10 @@ async def _handle_tool(name, args, tenant_id, perms, actions, demo=False) -> dic
                          "max_recipients": args.get("max_recipients") or 200})
         else:
             tool = args.get("report_tool", "")
-            if tool not in REPORT_TOOLS:
+            rt = await report_tools(tenant_id)
+            if tool not in rt:
                 return {"ok": False, "error": "unknown_report_tool", "note": "Διάλεξε έγκυρο report_tool."}
-            card.update({"name": args.get("name") or REPORT_TOOLS[tool], "report_tool": tool,
+            card.update({"name": args.get("name") or rt[tool], "report_tool": tool,
                          "report_args": args.get("report_args") or {},
                          "delivery": args.get("delivery") or "inapp", "email": args.get("email")})
         actions.append(card)
@@ -772,11 +815,15 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict], demo: bo
 
     client = anthropic.AsyncAnthropic(api_key=c["api_key"])
     now = _now()
-    system = (f"{SYSTEM}\n\nΣΗΜΕΡΑ: {now.strftime('%d/%m/%Y')} ({_gr_month(now.strftime('%Y-%m'))}). "
+    cy = await _is_cy(tenant_id)
+    if cy:
+        from app.services.cy import copilot as cy_copilot
+    base = cy_copilot.SYSTEM if cy else SYSTEM
+    system = (f"{base}\n\nΣΗΜΕΡΑ: {now.strftime('%d/%m/%Y')} ({_gr_month(now.strftime('%Y-%m'))}). "
               "ΧΡΗΣΙΜΟΠΟΙΗΣΕ ΤΙΣ ΗΜΕΡΟΜΗΝΙΕΣ/ΠΕΡΙΟΔΟΥΣ ΑΚΡΙΒΩΣ όπως έρχονται από τα εργαλεία "
               "(π.χ. period/period_label/period range). ΜΗΝ εφευρίσκεις μήνα ή έτος."
               + pharmacat_service.GUARDRAIL)
-    tools = _tools(perms)
+    tools = _tools(perms, cy=cy)
     msgs: list[dict] = [{"role": m["role"], "content": m["content"]} for m in messages]
     actions: list[dict] = []
     reply = ""
@@ -791,7 +838,12 @@ async def ask(*, tenant_id: str, perms: set[str], messages: list[dict], demo: bo
                 output_config={"effort": "low"},
                 tools=tools, messages=msgs)
             await ai_cost.record(tenant_id, c["model"], getattr(resp, "usage", None))
-            reply = "".join(b.text for b in resp.content if b.type == "text").strip() or reply
+            # ΟΛΟ το κείμενο της απάντησης, από ΚΑΘΕ βήμα. Πριν (έως 18/11/2026) κρατούσαμε μόνο το
+            # τελευταίο: το μοντέλο έγραφε τη λίστα μαζί με το open_screen και στο επόμενο βήμα μόνο
+            # «Θέλεις λεπτομέρειες;» — η απάντηση (π.χ. οι 5 γιατροί) χανόταν και έμενε το κουμπί.
+            part = "".join(b.text for b in resp.content if b.type == "text").strip()
+            if part:
+                reply = f"{reply}\n\n{part}" if reply else part
             if resp.stop_reason != "tool_use":
                 break
             assistant_content, tool_results = [], []

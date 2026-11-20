@@ -37,13 +37,36 @@ def _sig(messages: list[dict], context: dict | None) -> str:
     return hashlib.sha256(re.sub(r"\s+", " ", text).strip().encode("utf-8")).hexdigest()
 
 
+_GR_REFS = re.compile(r"ΕΟΦ|ΕΟΠΥΥ|ΗΔΥΚΑ|ΗΔΙΚΑ|ελληνικ|Ελλάδ|ΦΕΚ", re.I)
+_CY_REFS = re.compile(r"ΓεΣΥ|ΓΕΣΥ|\bΟΑΥ\b|Κύπρ|Κυπρ", re.I)
+
+
+def region_of(result) -> str | None:
+    """Σε ποια χώρα «ανήκει» μια αποθηκευμένη απάντηση: GR/CY αν αναφέρει φορείς της, αλλιώς None (κοινή)."""
+    import json
+    t = json.dumps(result or {}, ensure_ascii=False, default=str)
+    if _GR_REFS.search(t):
+        return "GR"
+    if _CY_REFS.search(t):
+        return "CY"
+    return None
+
+
 class PharmaCatRepository(BaseRepository):
     collection_name = "pharmacat_cases"
 
     # ── product recommendation (section 16): suggested substance → real market products (NAMES only).
     # We address a PHARMACIST, not an end consumer — NO price/margin (they see prices in their own
     # system) and NO stock (we don't receive the pharmacy's availability). Just the commercial names.
+    async def _is_cy(self) -> bool:
+        from app.services.cy.gate import tenant_country
+        if not hasattr(self, "_cy"):
+            self._cy = await tenant_country(self.tenant_id) == "CY"
+        return self._cy
+
     async def products_for(self, substances: list[dict]) -> list[dict]:
+        if await self._is_cy():
+            return await self._cy_products_for(substances)
         out: list[dict] = []
         seen_names: set[str] = set()
         for s in substances[:6]:
@@ -74,8 +97,57 @@ class PharmaCatRepository(BaseRepository):
                 out.append({"substance": term or atc, "products": names})
         return out
 
+    # ── ΚΥΠΡΟΣ: σκευάσματα από τον κατάλογο Κύπρου (PharmacyOne) — ΠΟΤΕ ελληνικά εμπορικά ονόματα ──
+    async def _cy_products_for(self, substances: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        seen: set[str] = set()
+        col = self._db["cy_catalog_items"]   # tenant-ok: κοινός κατάλογος αγοράς Κύπρου (δημόσια πληροφορία)
+        for s in substances[:6]:
+            term = (s.get("name") or "").strip()
+            atc = (s.get("atc") or "").strip().upper()
+            if not term and not atc:
+                continue
+            ors: list[dict] = []
+            if atc:
+                rx_atc = {"$regex": f"^{re.escape(atc)}"}
+                ors += [{"raw.gesy.ATC": rx_atc}, {"atc_match.atc": rx_atc}]
+            if term:
+                word = re.escape(term.split()[0])
+                ors += [{"raw.moh.ingredient": {"$regex": word, "$options": "i"}},
+                        {"raw.gesy.ActiveIngedientsStrength": {"$regex": word, "$options": "i"}}]
+            names = []
+            async for r in col.find({"active": True, "raw.supergroup": "MEDICINE", "$or": ors},
+                                    {"raw.name": 1}).limit(60):
+                nm = ((r.get("raw") or {}).get("name") or "").strip()
+                if not nm or nm.lower() in seen:
+                    continue
+                seen.add(nm.lower())
+                names.append({"name": nm, "narcotic": False, "eof": f"cy:{r['_id']}"})
+                if len(names) >= 8:
+                    break
+            if names:
+                out.append({"substance": term or atc, "products": names})
+        return out
+
+    async def _cy_medicine(self, item_id: str) -> dict:
+        from app.services.cy.pharmacyone import product_from_doc
+        d = await self._db["cy_catalog_items"].find_one({"_id": item_id})   # tenant-ok: κοινός κατάλογος
+        p = product_from_doc(d) if d else None
+        if not p:
+            return {"ok": False}
+        from app.services.cy.atc_link import substance_of
+        raw = d.get("raw") or {}
+        return jsonsafe({"ok": True, "eof": f"cy:{item_id}", "full_name": p["name"], "name": p["name"],
+                         "substance": substance_of(raw),
+                         "atc": p.get("atc"), "package_form": (raw.get("moh") or {}).get("pack"),
+                         "barcode": p.get("barcode"), "retail_cents": p.get("price_cents"),
+                         "wholesale_cents": p.get("wholesale_cents"), "narcotic": False, "high_cost": False,
+                         "category": " › ".join(p.get("cat_path") or []) or None})
+
     async def medicine(self, eof: str) -> dict:
         """Full ΗΔΥΚΑ catalogue info for one medicine (clicked from a recommendation)."""
+        if str(eof).startswith("cy:"):
+            return await self._cy_medicine(str(eof)[3:])
         d = await self._db["medicine_catalog"].find_one({"_id": eof})  # tenant-ok: shared catalogue
         if not d:
             return {"ok": False}
@@ -92,9 +164,25 @@ class PharmaCatRepository(BaseRepository):
 
     async def _cached_ask(self, user: str, messages: list[dict], context: dict | None,
                           *, kind: str, drugs: list[str] | None = None) -> dict:
-        sig = _sig(messages, context)
+        # ΚΟΙΝΗ βάση γνώσεων Ελλάδας–Κύπρου (18/11/2026, οδηγία ιδιοκτήτη): η κλινική απάντηση (triage,
+        # δραστικές, red flags) δεν έχει δεδομένα ασθενών/φαρμακείων — τα ΣΚΕΥΑΣΜΑΤΑ βγαίνουν ΠΑΝΤΑ από τον
+        # κατάλογο της χώρας τη στιγμή του serve (`products_for`). Χωριστή απάντηση ανά χώρα ΜΟΝΟ όταν η
+        # αποθηκευμένη μιλά για φορείς της άλλης χώρας (ΕΟΦ/ΕΟΠΥΥ… ή ΓεΣΥ/ΟΑΥ…).
+        # Πριν: η χώρα έμπαινε σε ΚΑΘΕ υπογραφή → η Κύπρος δεν έβλεπε καμία από τις 311 απαντήσεις
+        # (π.χ. «Βήχας», 63 χρήσεις) και πλήρωνε ξανά το AI.
+        country = "CY" if await self._is_cy() else "GR"
+        base = {k: v for k, v in (context or {}).items() if k != "_country"} or None
+        shared = _sig(messages, base)                                    # κοινή θέση
+        local = _sig(messages, {**(base or {}), "_country": country})    # θέση ΑΥΤΗΣ της χώρας
         kb = self._db["pharmacat_knowledge"]  # tenant-ok: shared clinical KB (generic, no patient PII)
-        hit = await kb.find_one({"sig": sig})
+        # ΠΡΩΤΑ η απάντηση της χώρας (αν υπάρχει, είναι η ακριβέστερη), ΜΕΤΑ η κοινή
+        sig, hit = local, await kb.find_one({"sig": local})
+        common = await kb.find_one({"sig": shared})
+        shared_free = common is None
+        if hit is None and common and region_of(common.get("result")) in (None, country):
+            sig, hit = shared, common                   # κοινή — ή γραμμένη για ΤΗ ΔΙΚΗ μας χώρα
+        # Κύπρος: η χώρα πάει στο prompt (κυπριακό πλαίσιο) και στην καταγραφή — ΟΧΙ στην υπογραφή
+        context = {**(base or {}), "_country": "CY"} if country == "CY" else base
         if hit:  # serve from our knowledge base — μετράει στο ημερήσιο όριο (και οι τοπικές απαντήσεις)
             from app.services import ai_quota
             allowed, _u, limit, reason = await ai_quota.check_and_consume(self.tenant_id, source="cache")
@@ -110,8 +198,13 @@ class PharmaCatRepository(BaseRepository):
         if not res.get("ok"):
             return res
         store = {k: v for k, v in res.items() if k != "ok"}  # products re-matched fresh each serve
+        # Αποθήκευση: στην ΚΟΙΝΗ θέση αν είναι ελεύθερη και η απάντηση δεν αναφέρει φορείς χώρας·
+        # αλλιώς στη θέση της χώρας (ποτέ δεν πατάμε πάνω σε απάντηση που χρησιμοποιεί η άλλη χώρα).
+        sig = shared if (shared_free and region_of(store) is None) else local
         question = next((m["content"] for m in messages if m.get("role") == "user"), "")
-        await kb.update_one({"sig": sig}, {"$set": {"sig": sig, "result": store, "last_at": _now()},
+        await kb.update_one({"sig": sig}, {"$set": {"sig": sig, "result": store, "last_at": _now(),
+                                                    # κοινή ή μόνο για μία χώρα (ετικέτα στο adminpanel)
+                                                    "scope": "shared" if sig == shared else country},
                                            "$setOnInsert": {"created_at": _now(), "hits": 0,
                                                             "query": question[:500]}}, upsert=True)
         res["source"] = "llm"; res["sig"] = sig
@@ -181,6 +274,8 @@ class PharmaCatRepository(BaseRepository):
         q = (q or "").strip()
         if len(q) < 2:
             return {"items": []}
+        if await self._is_cy():
+            return await self._cy_medicine_search(q, limit)
         rx = re.compile(re.escape(q), re.I)
         cur = self._db["medicine_catalog"].find(   # tenant-ok: shared platform catalogue
             {"$or": [{"name": rx}, {"full_name": rx}, {"substance_name": rx}],
@@ -200,6 +295,29 @@ class PharmaCatRepository(BaseRepository):
                 break
         return {"items": out}
 
+    async def _cy_medicine_search(self, q: str, limit: int) -> dict:
+        from app.services.cy.atc_link import substance_of
+        """Κύπρος: εμπορική ονομασία Ή δραστική στον κατάλογο Κύπρου· επιστρέφει τη ΔΡΑΣΤΙΚΗ για τον έλεγχο."""
+        rx = {"$regex": re.escape(q), "$options": "i"}
+        out: list[dict] = []
+        seen: set = set()
+        async for d in self._db["cy_catalog_items"].find(   # tenant-ok: κοινός κατάλογος Κύπρου
+                {"active": True, "raw.supergroup": "MEDICINE",
+                 "$or": [{"raw.name": rx}, {"raw.moh.ingredient": rx}]},
+                {"raw.name": 1, "raw.moh.ingredient": 1, "raw.gesy": 1, "atc_match": 1}).limit(120):
+            raw = d.get("raw") or {}
+            sub = substance_of(raw)
+            nm = (raw.get("name") or "").strip()
+            if not sub or (nm.lower(), sub.lower()) in seen:
+                continue
+            seen.add((nm.lower(), sub.lower()))
+            atc = (str((raw.get("gesy") or {}).get("ATC") or "").split("-")[0]
+                   or (d.get("atc_match") or {}).get("atc"))
+            out.append({"name": nm, "substance": sub, "atc": atc or None})
+            if len(out) >= limit:
+                break
+        return {"items": out}
+
     async def interactions_for_patient(self, ctx_user: str, *, patient_id: str | None = None,
                                        amka: str | None = None,
                                        added: list[str] | None = None) -> dict:
@@ -214,6 +332,13 @@ class PharmaCatRepository(BaseRepository):
                 pid = ObjectId(patient_id)
             except Exception:  # noqa: BLE001
                 pid = None
+        if pid is None and patient_id and await self._is_cy():
+            # Κύπρος: ο πελάτης ΓεΣΥ (ψευδώνυμο) → η «κάρτα γέφυρας» του, όπου ζει το πρόγραμμα λήψης
+            from app.repositories.cy import CyPatientRepository
+            from app.repositories.patient_portal import PatientAccountRepository
+            cyp = await CyPatientRepository(tenant_id=self.tenant_id).find_one({"pseudo_id": patient_id})
+            if cyp:
+                pid = await PatientAccountRepository().cy_shell(self.tenant_id, patient_id, cyp.get("full_name"))
         if pid is None and amka:
             pa = await self._db["patients_anonymized"].find_one(
                 {"tenant_id": self.tenant_id, "amka": (amka or "").strip()})
@@ -221,7 +346,8 @@ class PharmaCatRepository(BaseRepository):
         if pid is None:
             return {"ok": False, "error": "patient_not_found"}
         sched = await PatientRxRepository(tenant_id=self.tenant_id).medication_schedule(str(pid))
-        drugs = self._dedup([t.get("name") or "" for t in (sched.get("therapies") or [])])
+        # Κύπρος: η ΔΡΑΣΤΙΚΗ (όχι το εμπορικό όνομα) — έτσι ταιριάζει σωστά στη DrugBank/AI
+        drugs = self._dedup([t.get("substance") or t.get("name") or "" for t in (sched.get("therapies") or [])])
         added = self._dedup([a for a in (added or []) if a and a.strip()])
         if not drugs:
             # καμία ενεργή αγωγή → δεν υπάρχει με τι να ελεγχθεί το νέο σκεύασμα
@@ -265,6 +391,8 @@ class PharmaCatRepository(BaseRepository):
             "interaction_severities": [i.get("severity") for i in res.get("interactions") or []],
             "referral": (res.get("referral") or {}).get("urgency"),
             "reply": (res.get("reply") or "")[:2000],
+            # ποια εγγραφή της βάσης γνώσεων απάντησε (για τη μέτρηση στο adminpanel)
+            "sig": res.get("sig"),
         }
         await self._coll.insert_one(doc)  # case = audit trail (section 18/19)
 
@@ -361,3 +489,4 @@ class PharmaCatRepository(BaseRepository):
         s["ai_budget_period"] = st["budget_period"]   # μηνιαίος — ΟΧΙ το ημερήσιο `ai_period`
         s["ai_wallet_cents"] = st["wallet_cents"]
         return s
+

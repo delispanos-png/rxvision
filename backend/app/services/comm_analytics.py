@@ -128,8 +128,15 @@ async def overview(tenant_id: str, days: int = 30) -> dict:
         {"tenant_id": tenant_id, "status": "sent", "sent_at": {"$gte": since}},
         {"patient_ref": 1}) if r.get("patient_ref")}
     came = 0
+    cy_refs = [r[3:] for r in refs if str(r).startswith("cy:")]
+    if cy_refs:
+        # Κύπρος: «πέρασαν μετά» = εκτέλεση ΓεΣΥ στο διάστημα
+        came += len(await db["cy_dispensings"].distinct(   # tenant-ok: tenant_id στο φίλτρο
+            "patient_ref", {"tenant_id": tenant_id, "patient_ref": {"$in": cy_refs},
+                            "dispensed_at": {"$gte": since}}))
+        refs = {r for r in refs if not str(r).startswith("cy:")}
     if refs:
-        came = len(await db["prescription_executions"].distinct(
+        came += len(await db["prescription_executions"].distinct(
             "patient_ref", {"tenant_id": tenant_id, "patient_ref": {"$in": [_oid(r) for r in refs]},
                             "executed_at": {"$gte": since}}))
     return {"days": days, "campaigns": len(cs), "messages": sent,

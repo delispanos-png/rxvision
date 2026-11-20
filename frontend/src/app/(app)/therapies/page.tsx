@@ -38,7 +38,7 @@ export default function TherapiesPage() {
 
       <div className="space-y-6">
         <ProgramPatients kind="therapy" />
-        <VaccineProgramsConfig kind="therapy" />
+        <div id="params"><VaccineProgramsConfig kind="therapy" /></div>
       </div>
     </ModuleGuard>
   );

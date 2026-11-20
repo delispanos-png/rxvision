@@ -22,7 +22,9 @@ type Report = { runs: { run_at: string; added: number; price: number; renamed: n
 
 type Cfg = { types: string[]; last_sync_at?: string | null;
              last_result?: { added?: number; updated?: number } | null;
-             available: { key: string; label: string }[] };
+             available: { key: string; label: string }[];
+             // Κύπρος: η πηγή είναι ο κατάλογος της αγοράς (PharmacyOne), όχι η ελληνική βάση
+             country?: "GR" | "CY"; source?: { name: string; items: number; updated_at?: string | null } };
 
 const eur = (c?: number | null) =>
   c == null ? "—" : (c / 100).toLocaleString("el-GR", { style: "currency", currency: "EUR" });
@@ -47,6 +49,7 @@ function Inner() {
 
   const [kind, setKind] = useState("");
   const q = useQuery({ queryKey: ["catalog-sync"], queryFn: () => api<Cfg>("/catalog/sync-settings") });
+  const cy = q.data?.country === "CY";
   const rep = useQuery({ queryKey: ["catalog-sync", "report", kind],
     queryFn: () => api<Report>(`/catalog/sync-report?days=90${kind ? `&kind=${kind}` : ""}`) });
   useEffect(() => { if (q.data) setSel(q.data.types); }, [q.data]);
@@ -87,10 +90,28 @@ function Inner() {
           {t("Ενημέρωση καταλόγου", "Catalog updates")}
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          {t("Κάθε βράδυ σου στέλνουμε ό,τι άλλαξε στη βάση μας, μόνο για όσα διαλέξεις.",
-             "Every night we send you what changed in our database, only for what you select.")}
+          {cy
+            ? t("Ο κατάλογος της αγοράς της Κύπρου περνά στην Αποθήκη σου, και κάθε βράδυ σου στέλνουμε ό,τι άλλαξε, μόνο για όσα διαλέξεις.",
+                "The Cyprus market catalogue flows into your Warehouse, and every night we send you what changed, only for what you select.")
+            : t("Κάθε βράδυ σου στέλνουμε ό,τι άλλαξε στη βάση μας, μόνο για όσα διαλέξεις.",
+                "Every night we send you what changed in our database, only for what you select.")}
         </p>
       </header>
+
+      {cy && q.data?.source && (
+        <section className="rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+          <div className="font-semibold">{t("Κατάλογος της αγοράς της Κύπρου", "Cyprus market catalogue")} · {q.data.source.name}</div>
+          <div className="mt-0.5">
+            {q.data.source.items > 0
+              ? t(`${q.data.source.items.toLocaleString("el-GR")} είδη · ενημερώθηκε ${fmt(q.data.source.updated_at)}`,
+                  `${q.data.source.items.toLocaleString("el-GR")} items · updated ${fmt(q.data.source.updated_at)}`)
+              : t("Ο κατάλογος ετοιμάζεται. Μόλις είναι διαθέσιμος, πάτα «Ενημέρωση τώρα».",
+                  "The catalogue is being prepared. Once available, press «Update now».")}
+          </div>
+          <div className="mt-1 text-xs text-sky-700 dark:text-sky-300">{t("Όνομα, barcode, λιανική, χονδρική και ΦΠΑ. Τα είδη είναι μόνο για φαρμακεία της Κύπρου.",
+            "Name, barcode, retail, wholesale and VAT. These items are for Cyprus pharmacies only.")}</div>
+        </section>
+      )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
         <div className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
@@ -216,8 +237,11 @@ function Inner() {
           <li>{t("Τα αποθέματά σου.", "Your stock levels.")}</li>
           <li>{t("Ποια είδη έχεις βγάλει προς πώληση και τις εκπτώσεις σου.",
                  "Which items you put on sale and your discounts.")}</li>
-          <li>{t("Τιμές που έχεις αλλάξει εσύ. Ενημερώνουμε μόνο όσες τιμές δεν έχεις πειράξει — έτσι περνούν οι κρατικές διατιμήσεις χωρίς να χαθεί καμία δική σου τιμή.",
-                 "Prices you changed yourself. We only update prices you have not touched.")}</li>
+          <li>{cy
+            ? t("Τιμές που έχεις αλλάξει εσύ. Ενημερώνουμε μόνο όσες τιμές δεν έχεις πειράξει — έτσι περνούν οι νέες τιμές της αγοράς χωρίς να χαθεί καμία δική σου τιμή.",
+                "Prices you changed yourself. We only update prices you have not touched.")
+            : t("Τιμές που έχεις αλλάξει εσύ. Ενημερώνουμε μόνο όσες τιμές δεν έχεις πειράξει — έτσι περνούν οι κρατικές διατιμήσεις χωρίς να χαθεί καμία δική σου τιμή.",
+                "Prices you changed yourself. We only update prices you have not touched.")}</li>
         </ul>
       </section>
     </div>

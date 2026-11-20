@@ -66,7 +66,7 @@ def _html(day: dict, pharmacy: str) -> str:
 @celery_app.task(name="app.workers.coach.daily_briefing")
 def daily_briefing() -> dict:
     async def _run() -> dict:
-        from app.repositories.daily_coach import DailyCoachRepository
+        from app.repositories.cy_daily_coach import coach_for
         from app.services import mailer
         from app.services.auth_service import resolve_tenant_modules, tenant_has
         client, db = _fresh_db()
@@ -77,7 +77,7 @@ def daily_briefing() -> dict:
                 tid = t["_id"]
                 if not tenant_has(await resolve_tenant_modules(tid), "daily_coach"):
                     continue
-                repo = DailyCoachRepository(tenant_id=tid, demo=bool(t.get("demo")))
+                repo = await coach_for(tid, bool(t.get("demo")))   # Κύπρος → σήματα ΓεΣΥ
                 cfg = await repo.settings()
                 if not cfg["email_enabled"]:
                     continue
@@ -127,7 +127,7 @@ def escalate_stale() -> dict:
         from app.repositories.daily_coach import ESCALATE_DAYS, SIGNAL_LABEL
         from app.services import mailer
         from app.services.auth_service import resolve_tenant_modules, tenant_has
-        from app.repositories.daily_coach import DailyCoachRepository
+        from app.repositories.cy_daily_coach import coach_for
         client, db = _fresh_db()
         sent = 0
         try:
@@ -135,7 +135,7 @@ def escalate_stale() -> dict:
                 tid = t["_id"]
                 if not tenant_has(await resolve_tenant_modules(tid), "daily_coach"):
                     continue
-                repo = DailyCoachRepository(tenant_id=tid, demo=bool(t.get("demo")))
+                repo = await coach_for(tid, bool(t.get("demo")))   # Κύπρος → σήματα ΓεΣΥ
                 if not (await repo.settings())["escalate_owner"]:
                     continue
                 stale = [d async for d in db["coach_findings"].find(

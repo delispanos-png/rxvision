@@ -8,18 +8,20 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.db import shared_db
 
+from app.repositories.base import jsonsafe
 from app.core.deps import TenantContext
 from app.repositories.cy import CyPatientRepository
 from app.services.cy import analytics, chains, insights
 from app.services.cy.gate import require_cy
+from app.services.cy.masking import CyMaskedRoute, has_mask
 from app.services.cy.importer import MAX_TOTAL_BYTES, CyImportError, import_files
 
-router = APIRouter()
+router = APIRouter(route_class=CyMaskedRoute)   # παρουσίαση → απόκρυψη προσώπων σε ΚΑΘΕ απάντηση
 
 
 @router.get("/overview")
@@ -126,14 +128,38 @@ async def put_contact(ref: str, body: ContactIn, ctx: TenantContext = Depends(re
     Η συγκατάθεση δίνεται ρητά, με το τικ, αφού τη ζητήσει από τον πελάτη."""
     from app.services.cy import contacts as cy_contacts
     _perm(ctx, "patients:read")
+    # Οθόνη παρουσίασης: τα πεδία έρχονται ως «****» — ΠΟΤΕ δεν γράφονται πάνω στα πραγματικά.
+    data = {k: v for k, v in body.model_dump(exclude_unset=True).items() if not has_mask(v)}
     try:
-        c = await cy_contacts.set_contact(ctx.tenant_id, ref, body.model_dump(exclude_unset=True),
+        c = await cy_contacts.set_contact(ctx.tenant_id, ref, data,
                                           source="pharmacist")
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
     if c is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
     return {"ok": True}
+
+
+class DeceasedIn(BaseModel):
+    deceased: bool
+
+
+@router.put("/patients/{ref}/deceased")
+async def put_deceased(ref: str, body: DeceasedIn, ctx: TenantContext = Depends(require_cy)):
+    """Ο φαρμακοποιός σημειώνει ότι ο πελάτης απεβίωσε (ή το αναιρεί). Το ΓεΣΥ δεν το δίνει — το
+    σύστημα ΠΟΤΕ δεν το συμπεραίνει μόνο του. Από εκεί και πέρα: εκτός μηνυμάτων, χαμένων, Συμβούλου,
+    παραγγελίας και αναλύσεων (`chains.deceased_refs` — ένας ορισμός)."""
+    from datetime import datetime, timezone
+
+    from app.repositories.cy import CyPatientRepository
+    _perm(ctx, "patients:read")
+    repo = CyPatientRepository(tenant_id=ctx.tenant_id)
+    if not await repo.find_one({"pseudo_id": ref}):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    upd = ({"$set": {"deceased": {"at": datetime.now(timezone.utc), "by": getattr(ctx, "email", None) or ctx.user_id}}}
+           if body.deceased else {"$unset": {"deceased": ""}})
+    await repo.update_one({"pseudo_id": ref}, upd)
+    return {"ok": True, "deceased": body.deceased}
 
 
 def _perm(ctx: TenantContext, perm: str) -> None:
@@ -146,6 +172,18 @@ class PortalInviteIn(BaseModel):
     doc_number: str = Field(..., min_length=3, max_length=20)
     email: str = Field(..., min_length=5, max_length=200)
     phone: str | None = Field(None, max_length=30)
+
+
+@router.post("/patients/{ref}/shell")
+async def patient_shell(ref: str, ctx: TenantContext = Depends(require_cy)):
+    """Η «κάρτα γέφυρας» του πελάτη ΓεΣΥ (ίδια με της πύλης), για τα κοινά κυκλώματα που κλειδώνουν
+    με καρτέλα: πρόγραμμα λήψης, συνέπεια, μετρήσεις, διατροφή. Δημιουργείται μία φορά· κανένα ΑΜΚΑ."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    p = await CyPatientRepository(tenant_id=ctx.tenant_id).find_one({"pseudo_id": ref})
+    if not p:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    sid = await PatientAccountRepository().cy_shell(ctx.tenant_id, ref, p.get("full_name"))
+    return {"id": str(sid)}
 
 
 @router.post("/patients/{ref}/portal-invite")
@@ -198,6 +236,13 @@ async def not_dispensed(ctx: TenantContext = Depends(require_cy)):
 async def pc2(days: int = 90, ctx: TenantContext = Depends(require_cy)):
     """Διαφορά τιμής (PC2) ανά σκεύασμα και ανά πελάτη."""
     return await insights.pc2(ctx.tenant_id, days=max(7, min(days, 730)))
+
+
+@router.get("/claim")
+async def hio_claim(month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
+                    ctx: TenantContext = Depends(require_cy)):
+    """Μηνιαία απαίτηση προς τον ΟΑΥ (για έλεγχο της πληρωμής) — χωρίς στοιχεία πελατών."""
+    return await insights.hio_claim(ctx.tenant_id, month=month)
 
 
 @router.get("/doctors")
@@ -260,6 +305,18 @@ async def profitability(date_from: date | None = None, date_to: date | None = No
 async def reorder(horizon: int = 14, ctx: TenantContext = Depends(require_cy)):
     """Πρόταση παραγγελίας: ανοιχτές συνταγές του διαστήματος + ό,τι έλειψε − απόθεμα αποθήκης."""
     return await insights.reorder(ctx.tenant_id, horizon=max(3, min(horizon, 60)))
+
+
+@router.get("/pharmacyone")
+async def pharmacyone_status(ctx: TenantContext = Depends(require_cy)):
+    """Αυτόματη λήψη από την PharmacyOne: ενεργή; πότε έτρεξε; (ΠΟΤΕ το Client Id — το ορίζει ο
+    διαχειριστής RxVision από το adminpanel)."""
+    from app.services.cy import pharmacyone as p1
+    st = await p1.state(ctx.tenant_id)
+    return jsonsafe({"configured": bool(p1.client_id(ctx.tenant_id)), "enabled": bool(st.get("enabled")),
+                     "last_ok_at": st.get("last_ok_at"), "last_run_at": st.get("last_run_at"),
+                     "last_result": {k: (st.get("last_result") or {}).get(k)
+                                     for k in ("ok", "fetched", "imported", "updated", "error")}})
 
 
 @router.get("/staff")
@@ -327,12 +384,20 @@ async def import_xml(files: list[UploadFile] = File(...), ctx: TenantContext = D
 
 # ── Καμπάνιες (ίδια μηχανή αποστολής με την Ελλάδα, κυπριακό κοινό) ──────────
 
+class CyCouponIn(BaseModel):
+    discount_type: str = Field("pct", pattern="^(pct|fixed)$")
+    discount_value: int = Field(..., ge=1, le=100000)   # pct: 1-100 · fixed: λεπτά
+    valid_days: int = Field(30, ge=1, le=365)
+    max_redemptions: int = Field(0, ge=0, le=100000)
+
+
 class CyCampaignIn(BaseModel):
     channel: str = Field(..., pattern="^(sms|viber|email|push)$")
     segment: str = "all"
     purpose: str = Field("commercial", pattern="^(commercial|care)$")
     subject: str | None = Field(None, max_length=150)
     message: str = Field(..., min_length=3, max_length=1000)
+    coupon: CyCouponIn | None = None     # {coupon} στο κείμενο γίνεται ο κωδικός — ΜΟΝΟ σε εμπορικό μήνυμα
 
 
 @router.get("/campaigns/segments")
@@ -368,10 +433,26 @@ async def campaign_send(body: CyCampaignIn, ctx: TenantContext = Depends(require
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "clinical_segment_requires_care_purpose")
     if body.channel == "email" and not (body.subject or "").strip():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "subject_required")
+    coupon_code = None
+    if body.coupon:
+        # ίδιος φρουρός με την Ελλάδα: μήνυμα φροντίδας / κλινικό κοινό ΔΕΝ κουβαλά προσφορά
+        if body.purpose == "care" or clinical(body.segment):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "care_message_cannot_carry_offer")
+        if body.coupon.discount_type == "pct" and body.coupon.discount_value > 100:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_discount")
+        from bson import ObjectId
+
+        from app.services import marketing
+        cp = await marketing.create_coupon(
+            ctx.tenant_id, campaign_id=str(ObjectId()), discount_type=body.coupon.discount_type,
+            discount_value=body.coupon.discount_value, valid_days=body.coupon.valid_days,
+            max_redemptions=body.coupon.max_redemptions)
+        coupon_code = cp["code"]
     res = await campaign_engine.create(
         ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
-        segment=body.segment, value=None, purpose=body.purpose,
+        segment=body.segment, value=None, purpose=body.purpose, coupon_code=coupon_code,
         by=getattr(ctx, "email", None) or ctx.user_id)
+    res["coupon_code"] = coupon_code
     if res["recipients"]:
         dispatch_campaign.delay(res["campaign_id"])
     return {**res, "queued": True}

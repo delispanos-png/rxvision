@@ -99,7 +99,10 @@ export function VaccineProgramsConfig({ kind = "vaccine" }: { kind?: "vaccine" |
           <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{isTherapy ? t("Θεραπείες με επανάληψη — παράμετροι", "Repeat therapies — parameters")
                        : t("Περιοδικοί εμβολιασμοί — παράμετροι", "Periodic vaccinations — parameters")}</h3>
           <p className="mt-0.5 text-xs text-slate-400">
-            {t("Ποια μη εποχικά εμβόλια παρακολουθεί το φαρμακείο και κάθε πότε επαναλαμβάνονται.",
+            {isTherapy
+              ? t("Ποιες θεραπείες παρακολουθεί το φαρμακείο και κάθε πότε επαναλαμβάνονται.",
+                  "Which therapies the pharmacy tracks and how often they repeat.")
+              : t("Ποια μη εποχικά εμβόλια παρακολουθεί το φαρμακείο και κάθε πότε επαναλαμβάνονται.",
                "Which non-seasonal vaccines the pharmacy tracks and how often they repeat.")}
           </p>
         </div>
@@ -112,7 +115,9 @@ export function VaccineProgramsConfig({ kind = "vaccine" }: { kind?: "vaccine" |
       {!items.length && (
         <div className="py-6 text-center text-sm text-slate-400">
           <Syringe className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-          {t("Ξεκίνα με ένα εμβόλιο — π.χ. έρπης ζωστήρας ή τέτανος.", "Start with one vaccine — e.g. herpes zoster or tetanus.")}
+          {isTherapy
+            ? t("Ξεκίνα με μία θεραπεία — π.χ. Prolia κάθε 6 μήνες.", "Start with one therapy — e.g. Prolia every 6 months.")
+            : t("Ξεκίνα με ένα εμβόλιο — π.χ. έρπης ζωστήρας ή τέτανος.", "Start with one vaccine — e.g. herpes zoster or tetanus.")}
         </div>
       )}
 
@@ -219,14 +224,17 @@ function Editor({ value, groups, error, saving, isTherapy, onCancel, onSave }: {
 
         <Field label={t("Όνομα προγράμματος", "Programme name")}>
           <input value={v.name} onChange={(e) => set({ name: e.target.value })}
-            placeholder={t("π.χ. Έρπης ζωστήρας", "e.g. Herpes zoster")} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
+            placeholder={isTherapy ? t("π.χ. Prolia", "e.g. Prolia") : t("π.χ. Έρπης ζωστήρας", "e.g. Herpes zoster")} className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800" />
         </Field>
 
         {/* Σε ΕΠΕΞΕΡΓΑΣΙΑ το εμβόλιο κλειδώνει: αλλαγή του θα άλλαζε αναδρομικά ποιοι ασθενείς
             ανήκουν στο πρόγραμμα και τι σημαίνει το ιστορικό τους. Θέλεις άλλο εμβόλιο → νέο πρόγραμμα. */}
         {v._id ? (
-          <Field label={t("Εμβόλιο προγράμματος", "Programme vaccine")}
-            hint={t("Το εμβόλιο δεν αλλάζει μετά τη δημιουργία — για άλλο εμβόλιο φτιάξε νέο πρόγραμμα.",
+          <Field label={isTherapy ? t("Σκεύασμα προγράμματος", "Programme product") : t("Εμβόλιο προγράμματος", "Programme vaccine")}
+            hint={isTherapy
+              ? t("Το σκεύασμα δεν αλλάζει μετά τη δημιουργία — για άλλο φτιάξε νέο πρόγραμμα.",
+                  "The product cannot change after creation — create a new programme for a different one.")
+              : t("Το εμβόλιο δεν αλλάζει μετά τη δημιουργία — για άλλο εμβόλιο φτιάξε νέο πρόγραμμα.",
                     "The vaccine cannot change after creation — create a new programme for a different one.")}>
             <div className="flex flex-wrap gap-1.5 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
               {v.atc_prefixes.length ? v.atc_prefixes.map((a) => {

@@ -21,16 +21,30 @@ class SettingsIn(BaseModel):
     frequency_cap: int = 0      # μέγιστα προωθητικά μηνύματα/ασθενή/μήνα (0 = ανενεργό)
 
 
+async def _is_cy(tenant_id: str) -> bool:
+    """Κύπρος: ίδιες οθόνες, δεδομένα ΓεΣΥ (services/cy/marketing.py)."""
+    from app.services.cy.gate import tenant_country
+    return await tenant_country(tenant_id) == "CY"
+
+
 @router.get("/dashboard")
 async def dashboard(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     """Βασικό dashboard: αποδοτικότητα καμπανιών + προτάσεις στοχευμένων ενεργειών."""
+    if await _is_cy(ctx.tenant_id):
+        from app.services.cy import marketing as cy_marketing
+        return await cy_marketing.dashboard(ctx.tenant_id)
     return await marketing.dashboard(ctx.tenant_id, demo=ctx.demo)
 
 
 @router.get("/categories")
 async def categories(ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
     """Θεραπευτικές κατηγορίες με πλήθος & αξία ασθενών (για στόχευση 1-κλικ)."""
-    return {"items": await marketing.category_sizes(ctx.tenant_id),
+    if await _is_cy(ctx.tenant_id):
+        from app.services.cy import marketing as cy_marketing
+        items = await cy_marketing.category_sizes(ctx.tenant_id)
+    else:
+        items = await marketing.category_sizes(ctx.tenant_id)
+    return {"items": items, "country": "CY" if await _is_cy(ctx.tenant_id) else "GR",
             "catalog": [{"key": c["key"], "label": c["label"], "icon": c["icon"], "offer": c["offer"]}
                         for c in marketing.THERAPY_CATEGORIES]}
 

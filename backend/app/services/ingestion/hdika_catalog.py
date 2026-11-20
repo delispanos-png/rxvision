@@ -291,6 +291,9 @@ async def apply_rx_prices(db) -> int:
     now = datetime.now(tz=timezone.utc)
     changed = 0
     tids = await db["pharmacy_products"].distinct("tenant_id", {"type": "rx_medicine"})  # tenant-ok: όλες οι αποθήκες
+    # ΜΟΝΟ ελληνικές: οι κρατικές τιμές της ΗΔΥΚΑ δεν ισχύουν στην Κύπρο (εκεί: PharmacyOne/ΟΑΥ)
+    cy = {t["_id"] async for t in db["tenants"].find({"country": "CY"}, {"_id": 1})}
+    tids = [t for t in tids if t not in cy]
     for tid in tids:
         ops: list[tuple] = []
         async for p in db["pharmacy_products"].find(

@@ -32,6 +32,17 @@ SEEN = "release_notes_seen"
 COUNTRIES = ("GR", "CY", "ALL")
 
 
+def _key(version: str, country: str = "GR") -> str:
+    """ΧΩΡΙΣΤΗ ΑΡΙΘΜΗΣΗ (18/11/2026): η Κύπρος έχει δική της σειρά εκδόσεων (CY 1.0.0, 1.1.0 …).
+    Το κλειδί της είναι «CY:<έκδοση>», ώστε η κυπριακή 1.0.0 να μην πατήσει ποτέ την ελληνική 1.0.0.
+    Ελληνικές και «Όλοι» κρατούν το σκέτο νούμερο (όπως πάντα)."""
+    return f"CY:{version}" if (country or "GR").upper() == "CY" else version
+
+
+def _ver(r: dict) -> str:
+    return r.get("version") or str(r["_id"]).removeprefix("CY:")
+
+
 def _audience(country: str) -> dict:
     if (country or "GR").upper() == "CY":
         return {"country": {"$in": ["CY", "ALL"]}}
@@ -85,10 +96,12 @@ async def upsert(version: str, *, date: datetime | None = None, title: str = "",
                       # και δεν ξέρει πού να πάει — η ανακοίνωση γίνεται απογοήτευση.
                       "where": str((it or {}).get("where") or "").strip()[:120] or None,
                       "icon": str((it or {}).get("icon") or "")[:8] or None})
-    await shared_db()[COLL].update_one({"_id": v}, {"$set": {
+    country = country if country in COUNTRIES else "GR"
+    await shared_db()[COLL].update_one({"_id": _key(v, country)}, {"$set": {
+        "version": v,
         "date": date or _now(), "title": str(title or "").strip()[:160],
         "items": clean, "published": bool(published), "updated_at": _now(),
-        "country": country if country in COUNTRIES else "GR",
+        "country": country,
         "vsort": _vsort(v)}}, upsert=True)
     return {"ok": True, "version": v, "items": len(clean)}
 
@@ -96,20 +109,21 @@ async def upsert(version: str, *, date: datetime | None = None, title: str = "",
 async def admin_list(limit: int = 300) -> list[dict]:
     rows = [r async for r in shared_db()[COLL].find({}).sort("vsort", -1).limit(limit)]
     for r in rows:
-        r["version"] = r.pop("_id")
+        r["version"] = _ver(r)
+        r.pop("_id", None)
         r.pop("vsort", None)
         r.setdefault("country", "GR")
     return rows
 
 
-async def set_published(version: str, published: bool) -> dict:
-    r = await shared_db()[COLL].update_one({"_id": version},
+async def set_published(version: str, published: bool, country: str = "GR") -> dict:
+    r = await shared_db()[COLL].update_one({"_id": _key(version, country)},
                                            {"$set": {"published": bool(published)}})
     return {"ok": bool(r.matched_count), "version": version, "published": published}
 
 
-async def delete(version: str) -> dict:
-    r = await shared_db()[COLL].delete_one({"_id": version})
+async def delete(version: str, country: str = "GR") -> dict:
+    r = await shared_db()[COLL].delete_one({"_id": _key(version, country)})
     return {"ok": bool(r.deleted_count)}
 
 
@@ -124,7 +138,7 @@ async def for_tenant(tenant_id: str, limit: int = 40) -> dict:
     lastk = _vkey(last) if last else (0, 0, 0)
     out, unseen = [], 0
     for r in rows:
-        v = r["_id"]
+        v = _ver(r)
         is_new = _vkey(v) > lastk
         unseen += 1 if is_new else 0
         out.append({"version": v, "date": r.get("date"), "title": r.get("title"),
@@ -140,7 +154,7 @@ async def mark_seen(tenant_id: str) -> dict:
     top = await db[COLL].find({"published": True, **aud}).sort("vsort", -1).limit(1).to_list(length=1)
     if not top:
         return {"ok": True, "last_version": None}
-    v = top[0]["_id"]
+    v = _ver(top[0])
     await db[SEEN].update_one({"_id": tenant_id},
                               {"$set": {"last_version": v, "at": _now()}}, upsert=True)
     return {"ok": True, "last_version": v}

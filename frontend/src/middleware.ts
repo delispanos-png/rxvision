@@ -26,6 +26,11 @@ const CLARITY = {
 // από την εφαρμογή. Μόνο στο adminpanel, και μόνο εικόνες/γραμματοσειρές.
 const APP_ASSETS = "https://app.rxvision.gr";
 
+// ΦΩΤΟΓΡΑΦΙΕΣ ΕΙΔΩΝ ΚΥΠΡΟΥ: ο κατάλογος της PharmacyOne (services/cy/pharmacyone.py) δίνει δημόσιο
+// σύνδεσμο εικόνας ανά είδος. Χωρίς αυτή την εξαίρεση ο browser τις μπλόκαρε και έβγαιναν «σπασμένες»
+// (18/11/2026). ΜΟΝΟ εικόνες — κανένα script/σύνδεση από εκεί.
+const PRODUCT_IMAGES = "https://image.cloudon.gr";
+
 // REVOLUT: το παράθυρο πληρωμής φορτώνει script και iframe από τη Revolut. Χωρίς αυτές τις εξαιρέσεις ο
 // browser το μπλοκάρει σιωπηλά. Μόνο σε app/my, το adminpanel δεν πληρώνει.
 const REVOLUT = "https://merchant.revolut.com https://sandbox-merchant.revolut.com";
@@ -35,7 +40,7 @@ function csp(withClarity: boolean): string {
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${withClarity ? ` ${CLARITY.script} ${REVOLUT}` : ""}`,
   "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob: ${withClarity ? CLARITY.img : APP_ASSETS}`,
+  `img-src 'self' data: blob: ${PRODUCT_IMAGES} ${withClarity ? CLARITY.img : APP_ASSETS}`,
   `font-src 'self' data:${withClarity ? "" : ` ${APP_ASSETS}`}`,
   `connect-src 'self'${withClarity ? ` ${CLARITY.connect} ${REVOLUT}` : ""}`,
   "manifest-src 'self'",

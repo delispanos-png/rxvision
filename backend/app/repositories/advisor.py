@@ -607,7 +607,8 @@ class AdvisorRepository(BaseRepository):
             {"tenant_id": self.tenant_id, "_id": {"$in": [x for x in pids if x]}}, {"atc": 1})}
         atc_drugs: dict[str, set] = defaultdict(set)
         for t in therapies:
-            a = atc_of.get(str(t.get("med_key")))
+            # Κύπρος: ο ATC έρχεται έτοιμος στο πρόγραμμα λήψης (κατάλογος Κύπρου / services/cy/atc_link.py)
+            a = (t.get("atc") or "").upper() or atc_of.get(str(t.get("med_key")))
             if a:
                 atc_drugs[a].add(t.get("name") or "")
         sections = []
@@ -618,6 +619,13 @@ class AdvisorRepository(BaseRepository):
                 sections.append({"source": "therapy", "title": rule["title"], "drugs": drugs,
                                  "favor": rule["favor"], "avoid": rule["avoid"], "why": rule["why"]})
         ct = await self._db["patient_contacts"].find_one({"_id": oid, "tenant_id": self.tenant_id})
+        if pa.get("source") == "cy_portal" and pa.get("cy_pseudo_id"):
+            # Κύπρος: email/κινητό από την καρτέλα του πελάτη ΓεΣΥ (cy_patients.contact)
+            cyp = await self._db["cy_patients"].find_one(
+                {"tenant_id": self.tenant_id, "pseudo_id": pa["cy_pseudo_id"]}, {"contact": 1})
+            cc = (cyp or {}).get("contact") or {}
+            ct = {**(ct or {}), "email": (ct or {}).get("email") or cc.get("email"),
+                  "mobile": (ct or {}).get("mobile") or cc.get("mobile")}
         latest = await self._latest_measurements(oid)
         m_sections = measurement_sections(latest, (ct or {}).get("height_cm"))
         atcs = list(atc_drugs)

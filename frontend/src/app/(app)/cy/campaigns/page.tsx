@@ -6,7 +6,8 @@
    (συνταγές, αναλώσιμα) → μόνο μήνυμα φροντίδας. */
 
 import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send } from "lucide-react";
 import { api, ApiError } from "@/lib/apiClient";
@@ -24,16 +25,30 @@ const CHANNELS: [string, string, string][] = [["sms", "SMS", "SMS"], ["viber", "
 const ERR: Record<string, [string, string]> = {
   clinical_segment_requires_care_purpose: ["Αυτό το κοινό βγαίνει από δεδομένα υγείας: επιτρέπεται μόνο μήνυμα φροντίδας.", "This audience comes from health data: only a care message is allowed."],
   subject_required: ["Το email θέλει θέμα.", "An email needs a subject."],
+  care_message_cannot_carry_offer: ["Το μήνυμα φροντίδας δεν μπορεί να έχει κουπόνι.", "A care message cannot carry a coupon."],
+  bad_discount: ["Η έκπτωση % πρέπει να είναι έως 100.", "A % discount must be at most 100."],
 };
 
 export default function CyCampaignsPage() {
+  // useSearchParams θέλει Suspense στο Next 14 (αλλιώς σπάει το build της σελίδας)
+  return <Suspense fallback={null}><CyCampaignsInner /></Suspense>;
+}
+
+function CyCampaignsInner() {
   const t = useT();
   const qc = useQueryClient();
-  const [channel, setChannel] = useState("sms");
-  const [segment, setSegment] = useState("all");
+  // από Marketing → Dashboard / Θεραπευτικές κατηγορίες: ?segment=therapy:diabetes&channel=email
+  const sp = useSearchParams();
+  const [channel, setChannel] = useState(() => (["sms", "viber", "email", "push"].includes(sp.get("channel") ?? "") ? sp.get("channel")! : "sms"));
+  const [segment, setSegment] = useState(() => sp.get("segment") || "all");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  // Κουπόνι (μόνο σε εμπορικό μήνυμα): {coupon} στο κείμενο γίνεται ο κωδικός· εξαργύρωση στο ταμείο → απόδοση
+  const [cpOn, setCpOn] = useState(false);
+  const [cpType, setCpType] = useState<"pct" | "fixed">("pct");
+  const [cpVal, setCpVal] = useState("10");
+  const [cpDays, setCpDays] = useState("30");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const segs = useQuery({ queryKey: ["cy", "camp", "segs"], queryFn: () => api<{ items: Seg[] }>("/cy/campaigns/segments") });
   const aud = useQuery({ queryKey: ["cy", "camp", "aud", channel, segment],
@@ -53,7 +68,9 @@ export default function CyCampaignsPage() {
     setBusy(true); setMsg(null);
     try {
       const r = await api<{ recipients: number }>("/cy/campaigns", { method: "POST",
-        body: JSON.stringify({ channel, segment, purpose: care ? "care" : "commercial", subject: subject || null, message }) });
+        body: JSON.stringify({ channel, segment, purpose: care ? "care" : "commercial", subject: subject || null, message,
+          coupon: cpOn && !care ? { discount_type: cpType, discount_value: cpType === "pct" ? Number(cpVal) : Math.round(Number(String(cpVal).replace(",", ".")) * 100),
+            valid_days: Number(cpDays) || 30 } : null }) });
       setMsg({ ok: true, text: t(`Μπήκε στην ουρά για ${r.recipients} πελάτες. Η αποστολή γίνεται σε λίγα λεπτά.`, `Queued for ${r.recipients} customers. Sending takes a few minutes.`) });
       setMessage(""); setSubject("");
       qc.invalidateQueries({ queryKey: ["cy", "camp"] });
@@ -101,7 +118,26 @@ export default function CyCampaignsPage() {
             )}
             <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={5} maxLength={1000} className={inp}
               placeholder={t("Γεια σου {first}! Η επόμενη φάση της συνταγής σου σε περιμένει στο φαρμακείο.", "Hi {first}! The next step of your prescription is waiting for you at the pharmacy.")} />
-            <p className="text-[11px] text-slate-400">{t("{first} = μικρό όνομα, {name} = ονοματεπώνυμο.", "{first} = first name, {name} = full name.")} {channel === "sms" && `${message.length}/160`}</p>
+            <p className="text-[11px] text-slate-400">{t("{first} = μικρό όνομα, {name} = ονοματεπώνυμο.", "{first} = first name, {name} = full name.")}{cpOn && !care && ` ${t("{coupon} = ο κωδικός του κουπονιού.", "{coupon} = the coupon code.")}`} {channel === "sms" && `${message.length}/160`}</p>
+            {!care && (
+              <div className="rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+                <label className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200">
+                  <input type="checkbox" checked={cpOn} onChange={(e) => setCpOn(e.target.checked)} /> {t("Με κουπόνι έκπτωσης", "With a discount coupon")}
+                </label>
+                {cpOn && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select value={cpType} onChange={(e) => setCpType(e.target.value as "pct" | "fixed")} className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900">
+                      <option value="pct">%</option><option value="fixed">€</option>
+                    </select>
+                    <input value={cpVal} onChange={(e) => setCpVal(e.target.value)} inputMode="decimal" className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+                    <span className="text-xs text-slate-500">{t("ισχύει για", "valid for")}</span>
+                    <input value={cpDays} onChange={(e) => setCpDays(e.target.value)} inputMode="numeric" className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900" />
+                    <span className="text-xs text-slate-500">{t("ημέρες", "days")}</span>
+                    {!message.includes("{coupon}") && <span className="w-full text-xs text-amber-700">{t("Βάλε {coupon} στο κείμενο για να φαίνεται ο κωδικός.", "Put {coupon} in the text so the code shows.")}</span>}
+                  </div>
+                )}
+              </div>
+            )}
             <button onClick={send} disabled={busy || !a || a.recipients === 0 || message.trim().length < 3 || (channel === "email" && !subject.trim())}
               className="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50">
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {t("Αποστολή", "Send")}

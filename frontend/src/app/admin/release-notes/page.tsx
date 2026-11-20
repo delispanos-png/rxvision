@@ -21,13 +21,16 @@ const fmt = (s?: string) => (s ? new Date(s).toLocaleDateString("el-GR") : "");
 export default function ReleaseNotesAdmin() {
   const qc = useQueryClient();
   const [edit, setEdit] = useState<Note | null>(null);
+  // Η χώρα/έκδοση με την οποία ΑΝΟΙΞΕ η επεξεργασία: αν αλλάξει, η παλιά εγγραφή σβήνεται (αλλιώς
+  // θα έμεναν δύο — κάθε χώρα έχει δική της αρίθμηση και δικό της κλειδί).
+  const [orig, setOrig] = useState<{ version: string; country: string } | null>(null);
   const q = useQuery({ queryKey: ["admin", "release-notes"],
     queryFn: () => adminApi<{ items: Note[] }>("/admin/release-notes") });
 
   const pub = q.data?.items.filter((n) => n.published).length ?? 0;
 
   async function togglePublish(n: Note) {
-    await adminApi(`/admin/release-notes/${encodeURIComponent(n.version)}/publish?published=${!n.published}`,
+    await adminApi(`/admin/release-notes/${encodeURIComponent(n.version)}/publish?published=${!n.published}&country=${n.country || "GR"}`,
       { method: "POST" });
     qc.invalidateQueries({ queryKey: ["admin", "release-notes"] });
   }
@@ -37,13 +40,16 @@ export default function ReleaseNotesAdmin() {
     await adminApi("/admin/release-notes", { method: "PUT", body: JSON.stringify({
       version: edit.version.trim(), title: edit.title || "", published: edit.published, country: edit.country || "GR",
       items: (edit.items || []).filter((i) => i.title.trim()) }) });
+    if (orig && (orig.country !== (edit.country || "GR") || orig.version !== edit.version.trim()))
+      await adminApi(`/admin/release-notes/${encodeURIComponent(orig.version)}?country=${orig.country}`, { method: "DELETE" });
     setEdit(null);
+    setOrig(null);
     qc.invalidateQueries({ queryKey: ["admin", "release-notes"] });
   }
 
   async function remove(n: Note) {
     if (!(await appConfirm(`Διαγραφή της έκδοσης ${n.version};`, { danger: true }))) return;
-    await adminApi(`/admin/release-notes/${encodeURIComponent(n.version)}`, { method: "DELETE" });
+    await adminApi(`/admin/release-notes/${encodeURIComponent(n.version)}?country=${n.country || "GR"}`, { method: "DELETE" });
     qc.invalidateQueries({ queryKey: ["admin", "release-notes"] });
   }
 
@@ -59,7 +65,7 @@ export default function ReleaseNotesAdmin() {
             {q.data?.items.length ?? 0} εκδόσεις · <b>{pub}</b> δημοσιευμένες στους πελάτες
           </p>
         </div>
-        <button onClick={() => setEdit({ version: "", title: "", items: [{ title: "" }], published: false })}
+        <button onClick={() => { setOrig(null); setEdit({ version: "", title: "", items: [{ title: "" }], published: false }); }}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
           <Plus className="h-4 w-4" />Νέα σημείωση
         </button>
@@ -117,7 +123,7 @@ export default function ReleaseNotesAdmin() {
 
       <div className="space-y-2">
         {(q.data?.items || []).map((n) => (
-          <div key={n.version} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
+          <div key={`${n.country || "GR"}:${n.version}`} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600">v{n.version}</span>
               <span className="text-xs text-slate-400">{fmt(n.date)}</span>
@@ -132,7 +138,7 @@ export default function ReleaseNotesAdmin() {
                   {n.published ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
                   {n.published ? "Δημοσιευμένο" : "Κρυφό"}
                 </button>
-                <button onClick={() => setEdit(n)} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50">Επεξεργασία</button>
+                <button onClick={() => { setOrig({ version: n.version, country: n.country || "GR" }); setEdit(n); }} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50">Επεξεργασία</button>
                 <button onClick={() => remove(n)} className="rounded-lg border border-rose-300 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

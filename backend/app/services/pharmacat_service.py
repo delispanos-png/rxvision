@@ -147,6 +147,14 @@ def key_for(c: dict, *, internal: bool) -> str | None:
     return c.get("api_key")
 
 
+CY_NOTE = """
+
+ΠΛΑΙΣΙΟ ΚΥΠΡΟΥ: το φαρμακείο λειτουργεί στην Κύπρο. Οι συνταγές εκτελούνται μέσω ΓεΣΥ (ΟΑΥ)· αρμόδια
+αρχή φαρμάκων είναι οι Φαρμακευτικές Υπηρεσίες του Υπουργείου Υγείας Κύπρου. ΜΗΝ αναφέρεις ΕΟΦ, ΕΟΠΥΥ,
+ΗΔΥΚΑ ή ελληνική νομοθεσία. Όταν προτείνεις σκευάσματα, μίλα με δραστική ουσία — τα εμπορικά ονόματα της
+κυπριακής αγοράς τα συμπληρώνει το σύστημα από τον κατάλογο Κύπρου."""
+
+
 async def status() -> dict:
     c = await _config()
     return {"configured": bool(c["api_key"]), "enabled": bool(c["enabled"]),
@@ -170,10 +178,16 @@ async def ask(messages: list[dict], context: dict | None = None,
     import anthropic
 
     sys = SYSTEM
+    if (context or {}).get("_country") == "CY":
+        # ΚΥΠΡΟΣ: ίδιοι κανόνες ασφαλείας, άλλο ρυθμιστικό πλαίσιο (ΓεΣΥ/ΟΑΥ, Φαρμακευτικές Υπηρεσίες).
+        sys = SYSTEM.replace("σε ελληνικό φαρμακείο", "σε φαρμακείο της ΚΥΠΡΟΥ") + CY_NOTE
+    base = sys
     if context:
-        facts = ", ".join(f"{k}: {v}" for k, v in context.items() if v not in (None, "", []))
+        # κλειδιά με «_» = ρυθμίσεις (π.χ. χώρα), ΟΧΙ στοιχεία ασθενούς
+        facts = ", ".join(f"{k}: {v}" for k, v in context.items()
+                          if not str(k).startswith("_") and v not in (None, "", []))
         if facts:
-            sys = f"{SYSTEM}\n\nΓΝΩΣΤΑ ΣΤΟΙΧΕΙΑ ΑΣΘΕΝΟΥΣ: {facts}"
+            sys = f"{base}\n\nΓΝΩΣΤΑ ΣΤΟΙΧΕΙΑ ΑΣΘΕΝΟΥΣ: {facts}"
 
     model = model if model in ALLOWED_MODELS else c["model"]
     # Cost-optimised for a high-volume counter tool: NO extended thinking (OTC triage is recall).

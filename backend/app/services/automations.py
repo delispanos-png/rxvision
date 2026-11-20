@@ -62,6 +62,11 @@ async def save(tenant_id: str, data: dict, *, automation_id: str | None = None,
     trig = data.get("trigger")
     if trig not in TRIGGERS:
         return {"ok": False, "error": "bad_trigger"}
+    from app.services.cy.gate import tenant_country
+    if await tenant_country(tenant_id) == "CY":
+        from app.services.cy.marketing import CY_TRIGGERS
+        if trig not in CY_TRIGGERS:
+            return {"ok": False, "error": "bad_trigger"}
     doc = {
         "tenant_id": tenant_id,
         "name": (data.get("name") or TRIGGERS[trig]["label"]).strip()[:80],
@@ -105,7 +110,12 @@ async def delete(tenant_id: str, automation_id: str) -> dict:
 async def _candidates(tenant_id: str, a: dict) -> set:
     """Ποιοι ταιριάζουν ΣΗΜΕΡΑ στον trigger. Ξαναχρησιμοποιεί τον Audience Engine."""
     from app.services import audience as aud
+    from app.services.cy.gate import tenant_country
     trig, param = a.get("trigger"), int(a.get("param") or 0)
+    if await tenant_country(tenant_id) == "CY":
+        # Κύπρος: από τους πελάτες ΓεΣΥ (`cy:<pseudo>`)· ίδιοι triggers όπου υπάρχουν τα δεδομένα
+        from app.services.cy import marketing as cy_marketing
+        return await cy_marketing.automation_candidates(tenant_id, trig, param)
     db = shared_db()
     if trig == "inactive_days":
         # ΑΚΡΙΒΩΣ στο κατώφλι (παράθυρο 1 ημέρας) — όχι «όλοι όσοι ξεπέρασαν», αλλιώς την πρώτη
@@ -134,6 +144,7 @@ async def _candidates(tenant_id: str, a: dict) -> set:
 async def run_for_tenant(tenant_id: str) -> dict:
     """Ένα πέρασμα για ένα φαρμακείο. Καλείται από τον worker, μία φορά την ημέρα."""
     from app.services import comms
+    from app.services.cy.gate import tenant_country
     db = shared_db()
     total = 0
     async for a in db["comm_automations"].find({"tenant_id": tenant_id, "active": True}):
@@ -152,7 +163,11 @@ async def run_for_tenant(tenant_id: str) -> dict:
         if not fresh:
             continue
         # Δικλείδα 2: περνά από τους ΙΔΙΟΥΣ ελέγχους συγκατάθεσης με τις χειροκίνητες καμπάνιες.
-        rows = await comms.campaign_audience(tenant_id, a["channel"], "all", None, only_ids=set(fresh))
+        if await tenant_country(tenant_id) == "CY":
+            from app.services.cy import contacts as cy_contacts
+            rows = (await cy_contacts.audience(tenant_id, a["channel"], "all", only=set(fresh)))["recipients"]
+        else:
+            rows = await comms.campaign_audience(tenant_id, a["channel"], "all", None, only_ids=set(fresh))
         if not rows:
             continue
         from app.services import campaign_engine as ce
@@ -160,7 +175,8 @@ async def run_for_tenant(tenant_id: str) -> dict:
             tenant_id, channel=a["channel"], message=a["message"], subject=a.get("subject"),
             segment="all", value=None, purpose=a.get("purpose", "commercial"),
             by=f"automation:{a['_id']}", source="automation",
-            audience_rules=None, audience_name=a.get("name"))
+            audience_rules=None, audience_name=a.get("name"),
+            only_ids={r["patient_id"] for r in rows})   # ΜΟΝΟ αυτοί — όχι όλο το «all»
         # Καταγραφή ΠΡΙΝ την αποστολή: αν κάτι σκάσει, χειρότερο είναι να ξανασταλεί.
         await db["comm_automation_runs"].insert_many(
             [{"automation_id": a["_id"], "tenant_id": tenant_id, "patient_ref": r["patient_id"],

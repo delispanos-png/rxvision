@@ -1832,6 +1832,147 @@ async def cy_toggle(body: CyToggleIn, _: PlatformContext = Depends(get_platform_
     return {"enabled": await cy_enabled(), "rules": await cy_rules()}
 
 
+# ── Κύπρος: PharmacyOne (λήψη εκτελέσεων ΓεΣΥ + κεντρικός κατάλογος ειδών) ─────────────────────
+class PharmacyOneIn(BaseModel):
+    client_id: str | None = Field(None, max_length=64)   # ΜΟΝΟ εγγραφή· "" = αφαίρεση
+    enabled: bool | None = None
+
+
+async def _cy_tenant(tenant_id: str) -> None:
+    t = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"country": 1})
+    if not t:
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "not_found")
+    if (t.get("country") or "GR").upper() != "CY":
+        raise HTTPException(http_status.HTTP_409_CONFLICT, "not_cyprus")
+
+
+@router.get("/tenants/{tenant_id}/pharmacyone")
+async def pharmacyone_status(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Κατάσταση σύνδεσης — ΠΟΤΕ το ίδιο το Client Id (μόνο τα 4 τελευταία)."""
+    from app.services.cy import pharmacyone as p1
+    await _cy_tenant(tenant_id)
+    cid = p1.client_id(tenant_id)
+    return jsonsafe({"configured": bool(cid), "hint": p1.hint(cid), **await p1.state(tenant_id)})
+
+
+@router.put("/tenants/{tenant_id}/pharmacyone")
+async def pharmacyone_save(tenant_id: str, body: PharmacyOneIn,
+                           ctx: PlatformContext = Depends(get_platform_admin)):
+    from app.services.cy import pharmacyone as p1
+    await _cy_tenant(tenant_id)
+    if body.client_id is not None:
+        v = body.client_id.strip().lower()
+        if v and not p1.valid_client_id(v):
+            raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "bad_client_id")
+        p1.set_client_id(tenant_id, v or None)
+        await shared_db()["audit_logs"].insert_one({
+            "tenant_id": tenant_id, "action": "pharmacyone_client_id_" + ("set" if v else "removed"),
+            "by": ctx.email, "at": datetime.now(tz=timezone.utc)})
+        if not v:
+            await p1.set_enabled(tenant_id, False)
+    if body.enabled is not None:
+        if body.enabled and not p1.client_id(tenant_id):
+            raise HTTPException(http_status.HTTP_409_CONFLICT, "not_configured")
+        await p1.set_enabled(tenant_id, body.enabled)
+    cid = p1.client_id(tenant_id)
+    return jsonsafe({"configured": bool(cid), "hint": p1.hint(cid), **await p1.state(tenant_id)})
+
+
+@router.post("/tenants/{tenant_id}/pharmacyone/test")
+async def pharmacyone_test(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services.cy import pharmacyone as p1
+    await _cy_tenant(tenant_id)
+    try:
+        return await p1.test_connection(tenant_id)
+    except p1.PharmacyOneError as exc:
+        return {"ok": False, "error": exc.code}
+
+
+@router.post("/tenants/{tenant_id}/pharmacyone/sync")
+async def pharmacyone_sync(tenant_id: str, full: bool = False,
+                           _: PlatformContext = Depends(get_platform_admin)):
+    """Ξεκινά λήψη στο παρασκήνιο (`full` = όλο το ιστορικό ξανά· ο importer αγνοεί όσα έχουμε)."""
+    from app.services.cy import pharmacyone as p1
+    from app.workers.cy_pharmacyone import sync_executions_one
+    await _cy_tenant(tenant_id)
+    if not p1.client_id(tenant_id):
+        raise HTTPException(http_status.HTTP_409_CONFLICT, "not_configured")
+    sync_executions_one.delay(tenant_id, full)
+    return {"ok": True, "queued": True}
+
+
+# ── Κύπρος: «Κατάλογος ειδών Κύπρου» (ξεχωριστή οθόνη /admin/cy-catalog) ───────────────────────
+class CyTypesIn(BaseModel):
+    types: list[str] = []
+
+
+@router.get("/cy-catalog")
+async def cy_catalog(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services.cy import pharmacyone as p1
+    return jsonsafe(await p1.catalog_stats())
+
+
+class CyApiKeyIn(BaseModel):
+    api_key: str | None = Field(None, max_length=256)   # ΜΟΝΟ εγγραφή· "" = αφαίρεση
+
+
+@router.put("/cy-catalog/api-key")
+async def cy_catalog_api_key(body: CyApiKeyIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Κλειδί εφαρμογής PharmacyOne (X-API-Key) — κρυπτογραφημένο, δεν επιστρέφεται ποτέ."""
+    from app.services.cy import pharmacyone as p1
+    v = (body.api_key or "").strip()
+    if v and not p1.valid_api_key(v):
+        raise HTTPException(http_status.HTTP_400_BAD_REQUEST, "bad_api_key")
+    await p1.set_api_key(v or None)
+    await shared_db()["audit_logs"].insert_one({
+        "tenant_id": None, "action": "pharmacyone_api_key_" + ("set" if v else "removed"),
+        "by": ctx.email, "at": datetime.now(tz=timezone.utc)})
+    return jsonsafe(await p1.catalog_stats())
+
+
+@router.post("/cy-catalog/test")
+async def cy_catalog_test(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services.cy import pharmacyone as p1
+    try:
+        return await p1.test_platform()
+    except p1.PharmacyOneError as exc:
+        return {"ok": False, "error": exc.code}
+
+
+@router.post("/cy-catalog/sync")
+async def cy_catalog_sync(full: bool = False, _: PlatformContext = Depends(get_platform_admin)):
+    from app.workers.cy_pharmacyone import sync_items
+    sync_items.delay(full)
+    return {"ok": True, "queued": True}
+
+
+@router.get("/cy-catalog/items")
+async def cy_catalog_items(q: str = "", _: PlatformContext = Depends(get_platform_admin)):
+    from app.services.cy import pharmacyone as p1
+    return jsonsafe({"items": await p1.search_items(q)})
+
+
+@router.get("/cy-catalog/pharmacies")
+async def cy_catalog_pharmacies(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services.cy import pharmacyone as p1
+    return jsonsafe({"items": await p1.pharmacies()})
+
+
+@router.put("/cy-catalog/pharmacies/{tenant_id}")
+async def cy_catalog_set_types(tenant_id: str, body: CyTypesIn, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import catalog_sync
+    await _cy_tenant(tenant_id)
+    return await catalog_sync.set_settings(tenant_id, types=[t for t in body.types if t in ("rx_medicine", "parapharmacy")])
+
+
+@router.post("/cy-catalog/pharmacies/{tenant_id}/load")
+async def cy_catalog_load(tenant_id: str, _: PlatformContext = Depends(get_platform_admin)):
+    from app.workers.cy_pharmacyone import load_tenant
+    await _cy_tenant(tenant_id)
+    load_tenant.delay(tenant_id)
+    return {"ok": True, "queued": True}
+
+
 @router.patch("/tenants/{tenant_id}/status")
 async def set_tenant_status(tenant_id: str, body: StatusIn,
                             _: PlatformContext = Depends(get_platform_admin)):
@@ -1884,11 +2025,18 @@ async def _master_catalog(db) -> str | None:
     ΓΙΑΤΙ ΔΕΝ ΤΟΝ ΔΙΑΛΕΓΕΙ Ο ΧΡΗΣΤΗΣ: αυτό που πουλάμε είναι «έτοιμος κατάλογος», όχι
     «αντιγραφή από τον τάδε πελάτη». Το ποιο φαρμακείο τυχαίνει να κρατά σήμερα τον πληρέστερο
     κατάλογο είναι δική μας λεπτομέρεια — ο χρήστης διαλέγει ΠΡΟΪΟΝΤΑ και ΦΑΡΜΑΚΕΙΟ.
+    ΜΟΝΟ ελληνικά: η Κύπρος έχει δικό της κατάλογο (PharmacyOne) — βλ. services/catalog_sync.master_tenant.
     """
-    rows = await db["pharmacy_products"].aggregate([
-        {"$group": {"_id": "$tenant_id", "n": {"$sum": 1}}},
-        {"$sort": {"n": -1}}, {"$limit": 1}]).to_list(length=1)
-    return rows[0]["_id"] if rows else None
+    from app.services.catalog_sync import master_tenant
+    return await master_tenant(db)
+
+
+async def _not_cyprus_target(tenant_id: str) -> None:
+    """Ο ελληνικός κατάλογος ΔΕΝ φορτώνεται ποτέ σε κυπριακό φαρμακείο (εκείνο τον παίρνει από την
+    PharmacyOne, Ρυθμίσεις → Ενημέρωση καταλόγου)."""
+    from app.services.cy.gate import tenant_country
+    if await tenant_country(tenant_id) == "CY":
+        raise HTTPException(http_status.HTTP_409_CONFLICT, "cyprus_uses_pharmacyone")
 
 
 @router.get("/catalog-seed/pharmacies")
@@ -1901,7 +2049,8 @@ async def seed_pharmacies(include_all: bool = False,
     master = await _master_catalog(db)
     out = []
     hidden = 0
-    async for t in db["tenants"].find({}, {"name": 1, "status": 1, "modules": 1}):
+    # Κυπριακά φαρμακεία ΕΚΤΟΣ: ο ελληνικός κατάλογος δεν πάει ποτέ στην Κύπρο (PharmacyOne).
+    async for t in db["tenants"].find({"country": {"$ne": "CY"}}, {"name": 1, "status": 1, "modules": 1}):
         # ΜΟΝΟ όσοι έχουν αγοράσει την υπηρεσία. Ένα λάθος κλικ εδώ φορτώνει 40.000 είδη σε
         # φαρμακείο που δεν την πλήρωσε — και το ξεφόρτωμα δεν είναι απλή ακύρωση, γιατί ο
         # πελάτης μπορεί στο μεταξύ να έχει δουλέψει πάνω στα είδη.
@@ -1980,6 +2129,7 @@ async def seed_stuck_retry(_: PlatformContext = Depends(get_platform_admin)):
 async def seed_copy(body: SeedIn, _: PlatformContext = Depends(get_platform_admin)):
     """Φόρτωση επιλεγμένων κατηγοριών του κεντρικού καταλόγου σε ένα φαρμακείο."""
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
+    await _not_cyprus_target(body.target_tenant)
     db = shared_db()
     master = await _master_catalog(db)
     if not master:
@@ -2022,6 +2172,7 @@ async def seed_sample(body: SampleIn, _: PlatformContext = Depends(get_platform_
     ΔΕΝ απαιτεί ενεργό πρόσθετο: το δείγμα είναι ακριβώς ο τρόπος να το γνωρίσει κάποιος που
     δεν το έχει αγοράσει ακόμη.
     """
+    await _not_cyprus_target(body.target_tenant)
     from app.repositories.pharmacy_catalog import PharmacyCatalogRepository
     db = shared_db()
     master = await _master_catalog(db)
@@ -3867,9 +4018,75 @@ def _accent_insensitive_regex(term: str) -> str:
     return "".join(out)
 
 
+def _kb_scope(r: dict) -> str:
+    """«shared» | «GR» | «CY». Οι παλιές εγγραφές δεν έχουν `scope`: την ξαναβρίσκουμε από την
+    υπογραφή (μονή ερώτηση χωρίς πλαίσιο) — αλλιώς είναι κοινή."""
+    if r.get("scope"):
+        return r["scope"]
+    from app.repositories.pharmacat import _sig
+    q = r.get("query")
+    if q:
+        for c in ("CY", "GR"):
+            if _sig([{"role": "user", "content": q}], {"_country": c}) == r.get("sig"):
+                return c
+    return "shared"
+
+
+@router.get("/pharmacat-kb/stats")
+async def pharmacat_kb_stats(days: int = 30, _: PlatformContext = Depends(get_platform_admin)):
+    """Δείκτες της βάσης γνώσεων για ένα διάστημα (`days`=0 → όλο το ιστορικό): πόσες απαντήσεις,
+    πόσες ερωτήσεις από τη βάση ή από το AI, σημάνσεις λάθους, ανά χώρα, οι πιο συχνές."""
+    from app.services.cy.gate import cy_tenant_ids
+    db = shared_db()
+    since = datetime.now(tz=timezone.utc) - timedelta(days=days) if days > 0 else None
+    rng = {"$gte": since} if since else {"$exists": True}
+    kb = db["pharmacat_knowledge"]
+    entries = await kb.find({}, {"sig": 1, "query": 1, "hits": 1, "created_at": 1, "scope": 1,
+                                 "edited_at": 1, "flag_open": 1}).to_list(length=None)
+    scopes = defaultdict(int)
+    for e in entries:
+        scopes[_kb_scope(e)] += 1
+    cy_ids = set(await cy_tenant_ids())
+    cases = await db["pharmacat_cases"].aggregate([   # tenant-ok: πλατφόρμα — μόνο σύνολα, κανένα PII
+        {"$match": {"at": rng}},
+        {"$group": {"_id": {"t": "$tenant_id", "s": "$source", "k": "$kind"}, "n": {"$sum": 1}}}]
+    ).to_list(length=None)
+    q = {"total": 0, "cache": 0, "llm": 0, "GR": 0, "CY": 0, "chat": 0, "interaction": 0}
+    for c in cases:
+        n, src = c["n"], c["_id"].get("s")
+        q["total"] += n
+        q["cache" if src == "cache" else "llm"] += n
+        q["CY" if c["_id"].get("t") in cy_ids else "GR"] += n
+        q["interaction" if c["_id"].get("k") == "interaction" else "chat"] += n
+    rep = db["pharmacat_reports"]
+    top_period = await db["pharmacat_cases"].aggregate([   # tenant-ok: πλατφόρμα — μόνο σύνολα
+        {"$match": {"at": rng, "sig": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$sig", "n": {"$sum": 1}}}, {"$sort": {"n": -1}}, {"$limit": 10}]
+    ).to_list(length=None)
+    by_sig = {e["sig"]: e for e in entries}
+    top_all = sorted(entries, key=lambda e: -(e.get("hits") or 0))[:10]
+    return jsonsafe({
+        "days": days,
+        "entries": {"total": len(entries),
+                    "new": sum(1 for e in entries if e.get("created_at") and (not since or e["created_at"] >= since)),
+                    "never_used": sum(1 for e in entries if not e.get("hits")),
+                    "edited": sum(1 for e in entries if e.get("edited_at") and (not since or e["edited_at"] >= since)),
+                    "reuses": sum(int(e.get("hits") or 0) for e in entries),
+                    "scope": {"shared": scopes["shared"], "GR": scopes["GR"], "CY": scopes["CY"]}},
+        "questions": {**q, "hit_rate": round(100 * q["cache"] / q["total"]) if q["total"] else None},
+        "flags": {"new": await rep.count_documents({"created_at": rng}),
+                  "resolved": await rep.count_documents({"status": "resolved", "resolved_at": rng}),
+                  "open": await kb.count_documents({"flag_open": True})},
+        "top_all": [{"sig": e["sig"], "query": e.get("query"), "hits": int(e.get("hits") or 0),
+                     "scope": _kb_scope(e)} for e in top_all],
+        "top_period": [{"sig": t["_id"], "query": (by_sig.get(t["_id"]) or {}).get("query"), "n": t["n"]}
+                       for t in top_period],
+    })
+
+
 @router.get("/pharmacat-kb")
 async def pharmacat_kb_list(q: str | None = None, flagged: bool = False,
-                            page: int = 1, page_size: int = 30,
+                            page: int = 1, page_size: int = 30, sort: str = "recent",
                             _: PlatformContext = Depends(get_platform_admin)):
     """Search the shared PharmaCat knowledge base. `flagged=true` → only entries a pharmacist
     reported as wrong (with the reasons), so they can be found & corrected quickly."""
@@ -3885,8 +4102,16 @@ async def pharmacat_kb_list(q: str | None = None, flagged: bool = False,
     coll = db["pharmacat_knowledge"]
     total = await coll.count_documents(filt)
     flagged_total = await coll.count_documents({"flag_open": True})
-    # flagged entries first, then most-recent
-    rows = await (coll.find(filt).sort([("flag_open", -1), ("last_flag_at", -1), ("last_at", -1)])
+    # σημασμένες πρώτα· μετά: πιο πρόσφατες / πιο συχνές / ποτέ χρησιμοποιημένες
+    if sort == "unused":
+        filt = {**filt, "$and": [{"$or": [{"hits": 0}, {"hits": {"$exists": False}}]}]}
+        total = await coll.count_documents(filt)
+    # «Πιο συχνές»/«Ποτέ» = ΚΑΘΑΡΗ ταξινόμηση. Το «σημασμένες πρώτα» έβαζε μπροστά και όσες είχαν
+    # ΚΛΕΙΣΤΗ σημείωση (flag_open=False ταξινομείται πάνω από το «χωρίς πεδίο») — με 0 χρήσεις.
+    order = {"hits": [("hits", -1), ("last_at", -1)],
+             "unused": [("created_at", 1)]}.get(
+        sort, [("flag_open", -1), ("last_flag_at", -1), ("last_at", -1)])
+    rows = await (coll.find(filt).sort(order)
                   .skip((page - 1) * page_size).limit(page_size).to_list(length=page_size))
     sigs = [r.get("sig") for r in rows if r.get("flag_open")]
     reports_by_sig: dict = {}
@@ -3905,6 +4130,7 @@ async def pharmacat_kb_list(q: str | None = None, flagged: bool = False,
             "otc_categories": res.get("otc_categories") or [],
             "stage": res.get("stage"),
             "hits": r.get("hits", 0),
+            "scope": _kb_scope(r),
             "flag_open": bool(r.get("flag_open")),
             "flag_count": r.get("flag_count", 0),
             "reports": reports_by_sig.get(r.get("sig"), []),

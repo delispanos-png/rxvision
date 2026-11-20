@@ -457,7 +457,7 @@ export function ShopTab({ tenantKey = "x" }: { tenantKey?: string }) {
           return (
             <div key={p.barcode} className={`flex flex-col rounded-2xl border bg-white dark:bg-slate-800 p-2.5 ${p.featured ? "border-amber-300 ring-1 ring-amber-100" : "border-slate-200 dark:border-slate-700"}`}>
               <div onClick={() => setPdp(p)} title={t("Δες λεπτομέρειες", "View details")} className="relative mb-1 grid h-24 cursor-pointer place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900 sm:h-32">
-                {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
+                {imgSrc(p) ? <img src={imgSrc(p)} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-contain" /> : (med ? <Pill className="h-7 w-7 text-slate-300" /> : <Package className="h-7 w-7 text-slate-300" />)}
                 {(imgList(p).length > 1) && <span className="absolute bottom-1 right-8 rounded bg-black/60 px-1 text-[9px] font-semibold text-white">📷 {imgList(p).length}</span>}
                 {/* πάνω αριστερά: badge έκπτωσης + αγαπημένο (καρδιά) */}
                 <div className="absolute left-1 top-1 flex flex-col items-start gap-1">
@@ -625,7 +625,7 @@ function Checkout({ cart, subtotal, settings, camps, bundles, loyalty, onBack, o
       <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3">
         {items.map((x) => (
           <div key={x.p.barcode} className="flex items-center gap-2.5 border-b border-slate-100 dark:border-slate-800 py-2 last:border-0">
-            <button onClick={() => openProduct(x.p)} title={t("Δες λεπτομέρειες", "View details")} className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgSrc(x.p) ? <img src={imgSrc(x.p)} alt="" className="h-full w-full object-contain" /> : (isMed(x.p.type) ? <Pill className="h-5 w-5 text-slate-300" /> : <Package className="h-5 w-5 text-slate-300" />)}</button>
+            <button onClick={() => openProduct(x.p)} title={t("Δες λεπτομέρειες", "View details")} className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgSrc(x.p) ? <img src={imgSrc(x.p)} alt="" loading="lazy" className="max-h-full max-w-full object-contain" /> : (isMed(x.p.type) ? <Pill className="h-5 w-5 text-slate-300" /> : <Package className="h-5 w-5 text-slate-300" />)}</button>
             <div className="min-w-0 flex-1"><button onClick={() => openProduct(x.p)} className="block max-w-full truncate text-left text-sm font-medium text-slate-800 dark:text-slate-100 hover:text-violet-700">{x.p.name}</button><div className="text-xs text-slate-400">{eur(final(x.p, camps))} × {x.qty} = <b className="text-slate-500 dark:text-slate-300">{eur(final(x.p, camps) * x.qty)}</b></div></div>
             <div className="flex shrink-0 items-center gap-1.5">
               <button onClick={() => dec(x.p.barcode)} className="grid h-7 w-7 place-items-center rounded-full bg-slate-100 dark:bg-slate-700"><Minus className="h-3.5 w-3.5" /></button>
@@ -906,7 +906,7 @@ function Favorites({ onBack, favBarcodes, toggleFav, add, cart, dec, camps, open
         const fc = final(p, camps); const inCart = cart[p.barcode]?.qty ?? 0;
         return (
           <div key={p.barcode} className="flex items-center gap-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 shadow-sm">
-            <button onClick={() => openProduct(p)} title={t("Δες λεπτομέρειες", "View details")} className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">{imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</button>
+            <button onClick={() => openProduct(p)} title={t("Δες λεπτομέρειες", "View details")} className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">{imgSrc(p) ? <img src={imgSrc(p)} alt="" loading="lazy" className="max-h-full max-w-full object-contain" /> : <Pill className="h-5 w-5 text-slate-300" />}</button>
             <div className="min-w-0 flex-1">
               <button onClick={() => openProduct(p)} className="block max-w-full truncate text-left text-sm font-semibold text-slate-800 dark:text-slate-100 hover:text-violet-700">{p.name}</button>
               <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
@@ -961,7 +961,7 @@ function Subscriptions({ onBack }: { onBack: () => void }) {
             <div className="divide-y divide-slate-100 dark:divide-slate-800 px-3">
               {lines.map((l, i) => (
                 <div key={i} className="flex items-center gap-2.5 py-2">
-                  <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{l.image_id ? <img src={`${API_BASE}/catalog/image/${l.image_id}`} alt="" className="h-full w-full object-contain" /> : <Package className="h-5 w-5 text-slate-300" />}</span>
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{l.image_id ? <img src={`${API_BASE}/catalog/image/${l.image_id}`} alt="" loading="lazy" className="max-h-full max-w-full object-contain" /> : <Package className="h-5 w-5 text-slate-300" />}</span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{l.name ?? l.barcode}</div>
                     <div className="text-xs text-slate-400">{eur(l.unit_cents ?? l.price_cents ?? 0)} × {l.qty}{(l.discount_pct ?? 0) > 0 && <span className="ml-1 text-emerald-600">-{l.discount_pct}%</span>}</div>
@@ -1094,7 +1094,7 @@ function Offers({ onBack, add, goCart, cartCount, onBrowse }: { onBack: () => vo
             {data.products.map((p) => (
               <div key={p.barcode} className="flex flex-col overflow-hidden rounded-2xl border border-rose-100 bg-white dark:bg-slate-800 shadow-sm">
                 <div className="relative aspect-square bg-slate-50 dark:bg-slate-900">
-                  {imgSrc(p) ? <img src={imgSrc(p)} alt="" className="h-full w-full object-cover" /> : <span className="grid h-full w-full place-items-center text-slate-300"><Pill className="h-8 w-8" /></span>}
+                  {imgSrc(p) ? <img src={imgSrc(p)} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-contain" /> : <span className="grid h-full w-full place-items-center text-slate-300"><Pill className="h-8 w-8" /></span>}
                   <span className="absolute left-1.5 top-1.5 rounded-md bg-rose-600 px-1.5 py-0.5 text-[11px] font-bold text-white">−{p.eff_discount_pct}%</span>
                 </div>
                 <div className="flex flex-1 flex-col p-2.5">
@@ -1270,14 +1270,14 @@ function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFa
           {/* Gallery */}
           <div className="min-w-0">
             <div className="relative grid aspect-square place-items-center overflow-hidden rounded-xl bg-slate-50 dark:bg-slate-900">
-              {gallery.length ? <img src={gallery[idx]} alt="" className="h-full w-full object-contain" /> : <Package className="h-12 w-12 text-slate-300" />}
+              {gallery.length ? <img src={gallery[idx]} alt="" className="absolute inset-0 h-full w-full object-contain" /> : <Package className="h-12 w-12 text-slate-300" />}
               {dPct > 0 && <span className="absolute left-2 top-2 rounded-md bg-rose-600 px-2 py-0.5 text-xs font-bold text-white">−{dPct}%</span>}
               <button onClick={() => toggleFav(full.barcode)} className="absolute right-2 top-2 grid h-9 w-9 place-items-center rounded-full bg-white/90 shadow"><Heart className={`h-5 w-5 ${isFav ? "fill-rose-500 text-rose-500" : "text-slate-400"}`} /></button>
             </div>
             {gallery.length > 1 && (
               <div className="mt-2 flex gap-2 overflow-x-auto">
                 {gallery.map((g, i) => (
-                  <button key={i} onClick={() => setIdx(i)} className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 ${i === idx ? "border-violet-500" : "border-transparent"}`}><img src={g} alt="" className="h-full w-full object-cover" /></button>
+                  <button key={i} onClick={() => setIdx(i)} className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 ${i === idx ? "border-violet-500" : "border-transparent"}`}><img src={g} alt="" className="h-full w-full bg-white object-contain" /></button>
                 ))}
               </div>
             )}
@@ -1329,7 +1329,7 @@ function ProductModal({ product, camps, inCart, add, dec, onClose, onVideo, isFa
             <div className="flex gap-3 overflow-x-auto pb-1">
               {full.related.map((r) => (
                 <button key={r.barcode} onClick={() => { add(r); toast(t("Προστέθηκε στο καλάθι", "Added to cart"), "success"); }} className="w-28 shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 p-2 text-left transition hover:border-violet-300">
-                  <div className="grid h-20 place-items-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgList(r)[0] ? <img src={imgList(r)[0]} alt="" className="h-full w-full object-contain" /> : <Package className="h-6 w-6 text-slate-300" />}</div>
+                  <div className="flex h-20 items-center justify-center overflow-hidden rounded-lg bg-slate-50 dark:bg-slate-900">{imgList(r)[0] ? <img src={imgList(r)[0]} alt="" loading="lazy" className="max-h-full max-w-full object-contain" /> : <Package className="h-6 w-6 text-slate-300" />}</div>
                   <div className="mt-1 line-clamp-2 text-[11px] font-medium leading-tight text-slate-700 dark:text-slate-200">{r.name}</div>
                   <div className="mt-0.5 text-xs font-bold text-slate-900 dark:text-slate-100">{eur(r.sale_cents ?? r.price_cents)}</div>
                   <div className="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-violet-600"><Plus className="h-3 w-3" /> {t("Προσθήκη", "Add")}</div>

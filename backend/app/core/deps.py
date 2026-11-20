@@ -175,6 +175,10 @@ async def get_current_context(
         sid=claims.get("sid"),
     )
     request.state.tenant = ctx
+    if ctx.demo:   # παρουσίαση: η σειρά ονόματος (Κύπρος «ΟΝΟΜΑ ΕΠΙΘΕΤΟ») για ΣΩΣΤΗ απόκρυψη επιθέτου
+        from app.services.cy.gate import tenant_country
+        from app.utils.masking import set_given_name_first
+        set_given_name_first(await tenant_country(tenant_id) == "CY")
     # Force-logout: an admin «Αποσύνδεση» sets a Redis flag → ο token πεθαίνει ΑΜΕΣΩΣ (fail-open αν Redis down).
     if ctx.sid:
         from app.services import session_service as sessions

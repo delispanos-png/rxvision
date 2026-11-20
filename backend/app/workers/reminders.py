@@ -24,9 +24,16 @@ async def _account_for(db, accrepo, patient_ref, tenant_id=None):
     q = {"_id": patient_ref}
     if tenant_id:
         q["tenant_id"] = tenant_id
-    pat = await db["patients_anonymized"].find_one(q, {"amka": 1})  # tenant-ok: q έχει tenant_id όταν δοθεί
+    pat = await db["patients_anonymized"].find_one(q, {"amka": 1, "source": 1, "tenant_id": 1})  # tenant-ok: q έχει tenant_id όταν δοθεί
     amka = (pat or {}).get("amka")
-    return await accrepo.get_by_amka(amka) if amka else None
+    if amka:
+        return await accrepo.get_by_amka(amka)
+    # ΚΥΠΡΟΣ: η καρτέλα πύλης (`cy_portal`) δεν έχει ΑΜΚΑ — ο λογαριασμός βρίσκεται από τον σύνδεσμο.
+    if (pat or {}).get("source") == "cy_portal":
+        link = await db["patient_links"].find_one(  # tenant-ok: explicit tenant_id
+            {"tenant_id": pat["tenant_id"], "patient_ref": pat["_id"]}, {"account_id": 1})
+        return await accrepo.get(link["account_id"]) if link else None
+    return None
 
 
 @celery_app.task(name="app.workers.reminders.dispatch_med_reminders")
@@ -142,6 +149,8 @@ def dispatch_refill_radar() -> dict:
                     if not acc:
                         continue
                     sched = await PatientRxRepository(tenant_id=tid).medication_schedule(str(pref))
+                    if sched.get("country") == "CY":
+                        continue   # Κύπρος: «η επόμενη φάση σε περιμένει» (dispatch_cy_next_step)
                     for t in sched.get("therapies", []):
                         dl = t.get("days_left")
                         if not t.get("enabled") or dl is None or dl < 0 or dl > 3:

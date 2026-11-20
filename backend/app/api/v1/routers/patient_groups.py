@@ -24,7 +24,11 @@ _PERM = "patients:read"
 _WRITE = _PERM
 
 
-def _repo(ctx: TenantContext) -> PatientGroupRepository:
+async def _repo(ctx: TenantContext) -> PatientGroupRepository:
+    """Κύπρος: ίδια οθόνη, μέλη = ψευδώνυμα ΓεΣΥ (repositories/cy_groups.py)."""
+    from app.repositories.cy_groups import CyPatientGroupRepository, is_cy
+    if await is_cy(ctx.tenant_id):
+        return CyPatientGroupRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return PatientGroupRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
 
 
@@ -58,7 +62,7 @@ async def list_groups(q: str | None = Query(None),
                       skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=200),
                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Η αναζήτηση πιάνει όνομα οικογένειας, ΑΜΚΑ μέλους και όνομα μέλους."""
-    return await _repo(ctx).list_groups(kind=FAMILY, q=q, include_inactive=include_inactive,
+    return await (await _repo(ctx)).list_groups(kind=FAMILY, q=q, include_inactive=include_inactive,
                                         skip=skip, limit=limit)
 
 
@@ -71,6 +75,9 @@ async def search_patients(q: str = Query(..., min_length=2),
     αγόρασε ΜΟΝΟ τις Οικογένειες θα έπαιρνε 403 και το πεδίο δεν θα έβρισκε ποτέ κανέναν — το
     ίδιο λάθος είχε γίνει στις Προχορηγήσεις.
     """
+    from app.repositories.cy_groups import is_cy, search_patients as cy_search
+    if await is_cy(ctx.tenant_id):
+        return {"items": await cy_search(ctx.tenant_id, q, demo=ctx.demo)}
     from app.repositories.patients import PatientExecutionsRepository
     repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return {"items": await repo.search(q)}
@@ -79,14 +86,14 @@ async def search_patients(q: str = Query(..., min_length=2),
 @router.post("")
 async def create_group(body: GroupIn,
                        ctx: TenantContext = Depends(require(_WRITE, module=_MODULE))):
-    return await _repo(ctx).create(kind=FAMILY, name=body.name, by=ctx.user_id)
+    return await (await _repo(ctx)).create(kind=FAMILY, name=body.name, by=ctx.user_id)
 
 
 @router.get("/{gid}")
 async def group_detail(gid: str, months: int = Query(12, ge=1, le=60),
                        ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     df, dt = _period(months)
-    d = await _repo(ctx).detail(gid, date_from=df, date_to=dt)
+    d = await (await _repo(ctx)).detail(gid, date_from=df, date_to=dt)
     return d or {"error": "not_found"}
 
 
@@ -101,12 +108,22 @@ async def group_lists_all(gid: str, days: int = Query(45, ge=1, le=120),
     εναλλαγή είναι ακαριαία, γιατί τα δεδομένα είναι ήδη εκεί.
     """
     from app.services import group_lists
-    repo = _repo(ctx)
+    repo = await _repo(ctx)
     g = await repo.find_one({"_id": __import__("bson").ObjectId(gid)}) if gid else None
     if not g:
         return {"error": "not_found"}
     pseudos = [m["pseudo_id"] for m in (g.get("members") or [])
                if m.get("pseudo_id") and not m.get("left_at")]
+    from app.repositories.cy_groups import CyPatientGroupRepository
+    if isinstance(repo, CyPatientGroupRepository):
+        # Κύπρος: τα μέλη ΕΙΝΑΙ τα ψευδώνυμα που κρατούν οι εκτελέσεις — καμία μετάφραση
+        from app.repositories.cy import CyPatientRepository
+        from app.services.cy import group_lists as cy_gl
+        from app.utils.masking import mask_name
+        pats = await CyPatientRepository(tenant_id=ctx.tenant_id).find(
+            {"pseudo_id": {"$in": pseudos}}, limit=len(pseudos) + 1) if pseudos else []
+        names = {p["pseudo_id"]: mask_name(p.get("full_name"), ctx.demo) for p in pats}
+        return await cy_gl.everything(ctx.tenant_id, list(names), names, days=days, months=months)
     names, ids = {}, []
     if pseudos:
         from app.utils.masking import mask_name
@@ -122,19 +139,19 @@ async def group_lists_all(gid: str, days: int = Query(45, ge=1, le=120),
 @router.patch("/{gid}")
 async def rename_group(gid: str, body: GroupIn,
                        ctx: TenantContext = Depends(require(_WRITE, module=_MODULE))):
-    return await _repo(ctx).rename(gid, body.name)
+    return await (await _repo(ctx)).rename(gid, body.name)
 
 
 @router.delete("/{gid}")
 async def delete_group(gid: str,
                        ctx: TenantContext = Depends(require(_WRITE, module=_MODULE))):
-    return await _repo(ctx).delete(gid)
+    return await (await _repo(ctx)).delete(gid)
 
 
 @router.post("/{gid}/members")
 async def add_member(gid: str, body: MemberIn,
                      ctx: TenantContext = Depends(require(_WRITE, module=_MODULE))):
-    return await _repo(ctx).add_member(gid, amka=body.amka, pseudo_id=body.pseudo_id,
+    return await (await _repo(ctx)).add_member(gid, amka=body.amka, pseudo_id=body.pseudo_id,
                                        patient_id=body.patient_id,
                                        label=body.label, role=body.role)
 
@@ -142,7 +159,7 @@ async def add_member(gid: str, body: MemberIn,
 @router.patch("/{gid}/members/{pseudo_id}")
 async def update_member(gid: str, pseudo_id: str, body: MemberPatch,
                         ctx: TenantContext = Depends(require(_WRITE, module=_MODULE))):
-    return await _repo(ctx).update_member(gid, pseudo_id, label=body.label, role=body.role)
+    return await (await _repo(ctx)).update_member(gid, pseudo_id, label=body.label, role=body.role)
 
 
 @router.delete("/{gid}/members/{pseudo_id}")
@@ -156,7 +173,7 @@ async def remove_member(gid: str, pseudo_id: str,
     την πρώην σύζυγο. Δύο πόρτες, έκλεινε η μία.
     """
     from app.services import portal_access
-    out = await _repo(ctx).remove_member(gid, pseudo_id)
+    out = await (await _repo(ctx)).remove_member(gid, pseudo_id)
     if out.get("ok"):
         rev = await portal_access.revoke_between(ctx.tenant_id, pseudo_id,
                                                  out.get("others") or [], by=ctx.user_id)
@@ -179,7 +196,10 @@ async def family_alerts(patient_id: str,
     """
     from app.services import group_lists
     from app.utils.masking import mask_name
-    repo = _repo(ctx)
+    repo = await _repo(ctx)
+    from app.repositories.cy_groups import CyPatientGroupRepository
+    if isinstance(repo, CyPatientGroupRepository):
+        return await _family_alerts_cy(ctx, repo, patient_id)
     me = await repo._db["patients_anonymized"].find_one(
         {"tenant_id": ctx.tenant_id, "_id": __import__("bson").ObjectId(patient_id)},
         {"pseudo_id": 1}) if patient_id else None
@@ -214,4 +234,25 @@ async def family_alerts(patient_id: str,
 async def for_patient(patient_id: str,
                       ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Σε ποιες ομάδες ανήκει — το καταναλώνει η Εικόνα Πελάτη."""
-    return {"items": await _repo(ctx).groups_for_patient(patient_id)}
+    return {"items": await (await _repo(ctx)).groups_for_patient(patient_id)}
+
+
+async def _family_alerts_cy(ctx: TenantContext, repo, patient_id: str) -> dict:
+    """Κύπρος: ίδια λογική — δανεικά και είδη που δεν δόθηκαν στους ΥΠΟΛΟΙΠΟΥΣ της οικογένειας."""
+    from app.repositories.cy import CyPatientRepository
+    from app.services.cy import group_lists as cy_gl
+    from app.utils.masking import mask_name
+    out = []
+    for g in await repo.find({"kind": FAMILY, "active": {"$ne": False}, "members.pseudo_id": patient_id}, limit=5):
+        others = [m["pseudo_id"] for m in (g.get("members") or [])
+                  if m.get("pseudo_id") and not m.get("left_at") and m["pseudo_id"] != patient_id]
+        if not others:
+            continue
+        pats = await CyPatientRepository(tenant_id=ctx.tenant_id).find({"pseudo_id": {"$in": others}},
+                                                                       limit=len(others) + 1)
+        names = {p["pseudo_id"]: mask_name(p.get("full_name"), ctx.demo) for p in pats}
+        lo = await cy_gl.loans(ctx.tenant_id, list(names), names, limit=50)
+        pe = await cy_gl.pending(ctx.tenant_id, list(names), names, limit=50)
+        if lo or pe:
+            out.append({"group_id": str(g["_id"]), "group_name": g.get("name"), "loans": lo, "pending": pe})
+    return {"items": out}

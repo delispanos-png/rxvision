@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { RotateCcw, Wallet, Users } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useIdLabel } from "@/lib/cy";
 import { fmtNum, fmtEur, fmtDate } from "@/lib/formatters";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -21,6 +22,7 @@ type WB = {
 
 export default function WinbackPage() {
   const t = useT();
+  const idLabel = useIdLabel();
   const router = useRouter();
   const [open, setOpen] = useState<number | null>(null);   // κλικ σε κάρτα → οι ασφαλισμένοι της
   const { data, isLoading } = useQuery({ queryKey: ["pi-winback"], queryFn: () => api<WB>("/patient-intelligence/winback") });
@@ -29,7 +31,7 @@ export default function WinbackPage() {
   const rows = (data?.items ?? []).filter((r) => r.bucket === open);
   const cols: Column<Row>[] = [
     { key: "name", header: t("Ασφαλισμένος", "Patient"), render: (r) => r.name || r.amka || "—" },
-    { key: "amka", header: t("ΑΜΚΑ", "AMKA"), hideOnMobile: true, render: (r) => r.amka || "—" },
+    { key: "amka", header: idLabel, hideOnMobile: true, render: (r) => r.amka || "—" },
     { key: "last_seen", header: t("Τελ. επίσκεψη", "Last visit"), sortValue: (r) => r.days, render: (r) => r.last_seen ? fmtDate(r.last_seen) : "—" },
     { key: "days", header: t("Ημέρες αδράνειας", "Days inactive"), align: "right", sortValue: (r) => r.days, render: (r) => fmtNum(r.days) },
     { key: "value", header: t("Αξία", "Value"), align: "right", sortValue: (r) => r.value, render: (r) => <b>{fmtEur(r.value)}</b> },

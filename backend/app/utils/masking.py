@@ -6,7 +6,20 @@
 """
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 REDACT = "****"
+
+# ΣΕΙΡΑ ΟΝΟΜΑΤΟΣ (20/11/2026): ΗΔΥΚΑ = «ΕΠΙΘΕΤΟ ΟΝΟΜΑ», ΓεΣΥ (Κύπρος) = «ΟΝΟΜΑ ΕΠΙΘΕΤΟ».
+# Ο κανόνας είναι ΠΑΝΤΑ «κρύψε το επίθετο»· η σειρά ορίζεται ΜΙΑ φορά ανά αίτημα/εργασία από τη χώρα του
+# φαρμακείου (`core/deps.get_current_context`, `coach_for`) — έτσι και ο ελληνικός κώδικας που κληρονομεί
+# η Κύπρος κρύβει σωστά, χωρίς να «θυμάται» τίποτα κάθε σημείο.
+_GIVEN_FIRST: ContextVar[bool] = ContextVar("mask_given_first", default=False)
+
+
+def set_given_name_first(flag: bool) -> None:
+    """True → τα ονόματα είναι «ΟΝΟΜΑ ΕΠΙΘΕΤΟ» (Κύπρος)."""
+    _GIVEN_FIRST.set(bool(flag))
 
 
 def mask_surname(surname: str | None, demo: bool) -> str | None:
@@ -24,6 +37,10 @@ def mask_name(name: str | None, demo: bool) -> str | None:
     if not demo or not name:
         return name
     parts = str(name).split()
+    if _GIVEN_FIRST.get():                       # Κύπρος: «ΜΑΡΙΑ ΙΩΑΝΝΟΥ» → «ΜΑΡΙΑ Ι****»
+        if len(parts) >= 2:
+            return parts[0] + " " + " ".join(f"{w[:1]}****" for w in parts[1:])
+        return f"{parts[0][:1]}****" if parts else name
     if len(parts) >= 2:
         return f"{parts[0][:1]}**** " + " ".join(parts[1:])
     return f"{parts[0][:1]}****" if parts else name

@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PlusCircle, Search, X, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { InteractionsModal } from "./InteractionsModal";
 
 type Hit = { name: string; substance: string; atc: string | null };
@@ -13,6 +14,7 @@ type Hit = { name: string; substance: string; atc: string | null };
  *  δραστική) → κρατά τη ΔΡΑΣΤΙΚΗ → ελέγχει αλληλεπίδραση με την ενεργή αγωγή του ασθενή. */
 export function NewMedInteractionCard({ patientId }: { patientId: string }) {
   const t = useT();
+  const isCy = useCountry() === "CY";
   const [q, setQ] = useState("");
   const [dq, setDq] = useState("");
   const [open, setOpen] = useState(false);
@@ -47,7 +49,7 @@ export function NewMedInteractionCard({ patientId }: { patientId: string }) {
         <div className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
           <Search className="h-4 w-4 shrink-0 text-slate-400" />
           <input value={q} onChange={(e) => { setQ(e.target.value); setPicked(null); setOpen(true); }} onFocus={() => setOpen(true)}
-            placeholder={t("π.χ. Depon ή PARACETAMOL", "e.g. Depon or PARACETAMOL")}
+            placeholder={isCy ? t("π.χ. PANADOL ή PARACETAMOL", "e.g. PANADOL or PARACETAMOL") : t("π.χ. Depon ή PARACETAMOL", "e.g. Depon or PARACETAMOL")}
             className="w-full bg-transparent text-sm text-slate-800 outline-none dark:text-slate-100" />
           {q && <button onClick={clear} aria-label="clear"><X className="h-4 w-4 text-slate-400 hover:text-slate-600" /></button>}
         </div>

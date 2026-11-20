@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles, Send, Loader2, ArrowUpRight, Compass, Mic, Zap, CalendarClock } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { appConfirm } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -20,6 +21,14 @@ type Plan = { cards: PlanCard[]; count: number; generated_at: string };
 type Turn = { role: "user" | "assistant"; content: string; result?: Result };
 type Status = { configured: boolean; enabled: boolean; model: string; ai_used?: number; ai_included?: number; ai_period?: string; ai_budget_period?: string };
 
+// Κύπρος: ΓεΣΥ/PharmacyOne αντί για ΗΔΥΚΑ
+const QUICK_CY = [
+  ["Πόσες εκτελέσεις και τι αξία είχα τον τελευταίο μήνα;", "Dispensings and value last month?"],
+  ["Ποιοι είναι οι top 5 γιατροί;", "Who are the top 5 doctors?"],
+  ["Ποιες συνταγές καθυστερούν για την επόμενη φάση;", "Which prescriptions are late for their next step?"],
+  ["Έχω εκκρεμή αιτήματα πελατών;", "Any pending customer requests?"],
+  ["Φέρε τις νέες εκτελέσεις από την PharmacyOne", "Fetch new dispensings from PharmacyOne"],
+] as const;
 const QUICK = [
   ["Πόσος τζίρος & κέρδος τον τελευταίο μήνα;", "Revenue & profit last month?"],
   ["Ποιοι είναι οι top 5 ιατροί;", "Who are the top 5 doctors?"],
@@ -30,6 +39,7 @@ const QUICK = [
 
 function CopilotInner() {
   const t = useT();
+  const isCy = useCountry() === "CY";
   const router = useRouter();
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -152,7 +162,7 @@ function CopilotInner() {
         <span className="grid h-11 w-11 place-items-center rounded-2xl bg-gradient-to-br from-sky-500 to-blue-600 text-white shadow-lg"><Sparkles className="h-6 w-6" /></span>
         <div>
           <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100">RxVision Copilot</h1>
-          <p className="text-xs text-slate-500">{t("Ρώτα με πώς γίνεται κάτι, ζήτα δεδομένα (τζίρος, top ιατροί, εκκρεμότητες) ή ζήτα ενέργειες (π.χ. συγχρονισμός ΗΔΥΚΑ).", "Ask how to do something, ask for data (revenue, top doctors, pending), or ask for actions (e.g. ΗΔΥΚΑ sync).")}</p>
+          <p className="text-xs text-slate-500">{isCy ? t("Ρώτα με πώς γίνεται κάτι, ζήτα δεδομένα (εκτελέσεις, top γιατροί, φάσεις που καθυστερούν) ή ζήτα ενέργειες (π.χ. λήψη από PharmacyOne).", "Ask how to do something, ask for data (dispensings, top doctors, late steps), or ask for actions (e.g. fetch from PharmacyOne).") : t("Ρώτα με πώς γίνεται κάτι, ζήτα δεδομένα (τζίρος, top ιατροί, εκκρεμότητες) ή ζήτα ενέργειες (π.χ. συγχρονισμός ΗΔΥΚΑ).", "Ask how to do something, ask for data (revenue, top doctors, pending), or ask for actions (e.g. ΗΔΥΚΑ sync).")}</p>
         </div>
       </div>
 
@@ -188,7 +198,7 @@ function CopilotInner() {
             <Compass className="mx-auto h-8 w-8 text-sky-400" />
             <p className="text-sm text-slate-500">{t("Π.χ. δοκίμασε:", "e.g. try:")}</p>
             <div className="mx-auto flex max-w-xl flex-wrap justify-center gap-1.5">
-              {QUICK.map(([el, en]) => <button key={el} onClick={() => send(t(el, en))} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-sky-300 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-800">{t(el, en)}</button>)}
+              {(isCy ? QUICK_CY : QUICK).map(([el, en]) => <button key={el} onClick={() => send(t(el, en))} className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-sky-300 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-800">{t(el, en)}</button>)}
             </div>
           </div>
         )}

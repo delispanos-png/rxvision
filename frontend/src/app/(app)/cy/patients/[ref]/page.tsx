@@ -15,6 +15,7 @@ import { BarChart } from "@/components/charts/BarChart";
 import { api, ApiError } from "@/lib/apiClient";
 import { fmtDate, fmtDateTime, fmtDec, fmtEur, fmtNum } from "@/lib/formatters";
 import { useT } from "@/store/prefStore";
+import { appConfirm } from "@/store/dialogStore";
 import { ageOf, STATUS_STYLE, type ChainStatus } from "@/lib/cy";
 
 type Amounts = { hio: number; beneficiary: number; pc2: number; total: number };
@@ -22,7 +23,7 @@ type Chain = { prescription_id: string; kind: string; doctor: string | null; nex
   instance: number; instances: number; items: string[]; value_at_stake_cents: number; status: ChainStatus | "closed" };
 type Card = {
   patient: { ref: string; full_name: string | null; gender: string | null; dob: string | null; hio_code: string | null;
-    first_seen: string | null; last_seen: string | null };
+    first_seen: string | null; last_seen: string | null; deceased_at?: string | null };
   flags: { exemption: "exempt" | "pays" | "unknown"; diabetic: boolean };
   totals: Amounts & { visits: number };
   doctors: { id: string | null; name: string; visits: number }[];
@@ -115,6 +116,7 @@ export default function CyPatientCardPage() {
       </div>
 
       <ContactBox refId={c.patient.ref} contact={c.contact} />
+      <DeceasedBox refId={c.patient.ref} at={c.patient.deceased_at ?? null} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <PanelCard title={t("Εκτελέσεις ανά μήνα (12 μήνες)", "Dispensings per month (12 months)")} className="lg:col-span-2">
@@ -265,6 +267,34 @@ const CONTACT_ERR: Record<string, [string, string]> = {
   bad_mobile: ["Το κινητό δεν είναι έγκυρο. Γράψε 8 ψηφία (π.χ. 99123456) ή με +357.", "Invalid mobile. Enter 8 digits (e.g. 99123456) or with +357."],
   bad_email: ["Το email δεν είναι έγκυρο.", "The email is not valid."],
 };
+
+/** «Απεβίωσε»: το ΓεΣΥ δεν το δίνει, το σημειώνει ΜΟΝΟ ο φαρμακοποιός. Από εκεί και πέρα ο πελάτης βγαίνει
+ *  από μηνύματα, χαμένους, Σύμβουλο, παραγγελία και αναλύσεις. Αναιρείται με ένα κλικ. */
+function DeceasedBox({ refId, at }: { refId: string; at: string | null }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  async function set(v: boolean) {
+    if (v && !(await appConfirm(t("Να σημειωθεί ότι ο πελάτης απεβίωσε; Δεν θα λαμβάνει μηνύματα και θα βγει από τους χαμένους πελάτες, τον Σύμβουλο και την πρόταση παραγγελίας. Αναιρείται οποτεδήποτε.",
+      "Mark this customer as deceased? They will receive no messages and leave lost customers, the Advisor and reorder suggestions. You can undo this any time."),
+      { title: t("Σημείωση: απεβίωσε", "Mark as deceased"), confirmText: t("Σημείωση", "Mark") }))) return;
+    setBusy(true);
+    try {
+      await api(`/cy/patients/${encodeURIComponent(refId)}/deceased`, { method: "PUT", body: JSON.stringify({ deceased: v }) });
+      qc.invalidateQueries({ queryKey: ["cy", "patient", refId] });
+    } finally { setBusy(false); }
+  }
+  return at ? (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-300 bg-slate-100 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+      <span>🕊 {t("Σημειώθηκε ότι απεβίωσε", "Marked as deceased")} · {fmtDate(at)}. {t("Δεν λαμβάνει μηνύματα και δεν εμφανίζεται σε λίστες ενεργειών.", "Receives no messages and is left out of action lists.")}</span>
+      <button disabled={busy} onClick={() => set(false)} className="text-xs font-medium text-brand-700 hover:underline disabled:opacity-50 dark:text-brand-300">{t("Αναίρεση", "Undo")}</button>
+    </div>
+  ) : (
+    <div className="text-right">
+      <button disabled={busy} onClick={() => set(true)} className="text-xs text-slate-400 hover:text-slate-600 hover:underline disabled:opacity-50">{t("Σημείωσε ότι απεβίωσε", "Mark as deceased")}</button>
+    </div>
+  );
+}
 
 /** Στοιχεία επικοινωνίας: το XML ΓεΣΥ δεν τα έχει, τα γράφει ο φαρμακοποιός (ή ο πελάτης από την πύλη).
  *  Η συγκατάθεση δίνεται ΡΗΤΑ: χωρίς αυτήν ο πελάτης δεν μπαίνει σε καμία καμπάνια. */

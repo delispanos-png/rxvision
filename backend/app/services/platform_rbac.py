@@ -365,6 +365,7 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("GET", "/area-aliases"): "integrations:read",
     ("POST", "/area-aliases/override"): "integrations:write",
     ("GET", "/pharmacat-kb"): "pharmacat:read",
+    ("GET", "/pharmacat-kb/stats"): "pharmacat:read",
     ("PUT", "/pharmacat-kb/{sig}"): "pharmacat:write",
     ("DELETE", "/pharmacat-kb/{sig}"): "pharmacat:delete",
     ("POST", "/pharmacat-kb/{sig}/regenerate"): "pharmacat:write",
@@ -405,6 +406,20 @@ _ADMIN: dict[tuple[str, str], str] = {
     # Κύπρος: διακόπτης κυπριακού κομματιού (κλειστό → 404 σε κάθε κυπριακό endpoint)
     ("GET", "/cy"): "system:read",
     ("PUT", "/cy"): "system:write",
+    # Κύπρος — «Κατάλογος ειδών Κύπρου»
+    ("GET", "/cy-catalog"): "tenants:read",
+    ("GET", "/cy-catalog/items"): "tenants:read",
+    ("GET", "/cy-catalog/pharmacies"): "tenants:read",
+    ("PUT", "/cy-catalog/api-key"): "system:write",
+    ("POST", "/cy-catalog/test"): "system:write",
+    ("POST", "/cy-catalog/sync"): "system:write",
+    ("PUT", "/cy-catalog/pharmacies/{tenant_id}"): "tenants:modules",
+    ("POST", "/cy-catalog/pharmacies/{tenant_id}/load"): "tenants:modules",
+    # Κύπρος — PharmacyOne ανά φαρμακείο: το Client Id είναι μυστικό, ίδια ευαισθησία με τα credentials
+    ("GET", "/tenants/{tenant_id}/pharmacyone"): "tenants:credentials",
+    ("PUT", "/tenants/{tenant_id}/pharmacyone"): "tenants:credentials",
+    ("POST", "/tenants/{tenant_id}/pharmacyone/test"): "tenants:credentials",
+    ("POST", "/tenants/{tenant_id}/pharmacyone/sync"): "tenants:credentials",
     ("GET", "/data-retention"): "system:read",
     ("PUT", "/data-retention/pricing"): "system:write",
     ("POST", "/data-retention/purge"): "system:purge",

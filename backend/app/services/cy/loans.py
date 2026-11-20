@@ -55,10 +55,9 @@ async def name_for(tenant_id: str, gtin: str | None) -> str | None:
         {"$limit": 1}, {"$project": {"_id": 0, "d": "$lines.description"}}])
     if rows:
         return rows[0].get("d")
-    from app.core.db import shared_db
-    p = await shared_db()["pharmacy_products"].find_one(  # tenant-ok: tenant_id στο φίλτρο
-        {"tenant_id": tenant_id, "barcode": {"$in": [g, "0" + g]}}, {"name": 1})
-    return (p or {}).get("name")
+    from app.services.cy import warehouse
+    wh = await warehouse.lookup(tenant_id, [{"barcode": g}], fields=("name",))
+    return (wh.get(g) or {}).get("name")
 
 
 async def scan(tenant_id: str, raw: str) -> dict[str, Any]:

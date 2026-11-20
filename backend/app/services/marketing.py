@@ -397,12 +397,14 @@ async def campaigns_with_roi(tenant_id: str, days: int = 90, limit: int = 60) ->
     """Λίστα καμπανιών με απόδοση: στάλθηκε → εξαργυρώθηκε → αξία (conversion %). Join με τα κουπόνια."""
     db = shared_db()
     cutoff = _now() - timedelta(days=days)
-    coupons = {c["campaign_id"]: c async for c in db["campaign_coupons"].find({"tenant_id": tenant_id})}
+    rows = [c async for c in db["campaign_coupons"].find({"tenant_id": tenant_id})]
+    coupons = {c["campaign_id"]: c for c in rows}
+    by_code = {c["_id"]: c for c in rows}           # και με τον κωδικό της καμπάνιας (ανθεκτικό)
     out = []
     async for c in db["comms_campaigns"].find(
             {"tenant_id": tenant_id, "created_at": {"$gte": cutoff}}).sort("created_at", -1).limit(limit):
         cid = str(c["_id"])
-        cp = coupons.get(cid)
+        cp = coupons.get(cid) or by_code.get(c.get("coupon_code"))
         sent = int(c.get("sent", 0) or 0)
         red = int(cp.get("redemptions", 0)) if cp else 0
         out.append({

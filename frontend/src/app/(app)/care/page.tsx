@@ -20,6 +20,7 @@ import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 
 type Row = { id: string; name: string; care_type?: string | null; members: number;
              balance: number; last_receipt_at?: string | null; last_receipt?: number | null };
@@ -68,6 +69,8 @@ export default function CarePage() {
 
 function Inner() {
   const t = useT();
+  // Κύπρος: τρόφιμοι = πελάτες ΓεΣΥ· χωρίς «άυλη/έντυπη»· σύνδεσμοι στις οθόνες Κύπρου
+  const isCy = useCountry() === "CY";
   const qc = useQueryClient();
   const [sel, setSel] = useState<string | null>(null);
   const [tab, setTab] = useState<"info" | "account" | "cycle" | "people">("account");
@@ -182,6 +185,7 @@ function Inner() {
                                    "This person is recorded as deceased — cannot be added.")
         : r.error === "already_member" ? t("Είναι ήδη τρόφιμος.", "Already a resident.")
         : r.error === "bad_amka" ? t("Το ΑΜΚΑ πρέπει να είναι 11 ψηφία.", "AMKA must be 11 digits.")
+        : r.error === "no_patient" ? t("Δεν βρέθηκε πελάτης — προστίθεται μόλις έρθει η πρώτη του εκτέλεση ΓεΣΥ.", "No such customer — they can be added once their first GHS dispensing arrives.")
         : t("Δεν προστέθηκε.", "Could not add."));
       return;
     }
@@ -580,12 +584,12 @@ function Inner() {
                     <li key={i} className="px-4 py-3">
                       <div className="flex flex-wrap items-baseline gap-2">
                         <span className="font-semibold text-slate-800 dark:text-slate-100">{p.name}</span>
-                        <a href={`/prescriptions/${encodeURIComponent(p.barcode)}`}
+                        <a href={isCy ? `/cy/dispensings/${encodeURIComponent(p.barcode)}` : `/prescriptions/${encodeURIComponent(p.barcode)}`}
                            className="text-[11px] text-rose-600 hover:underline">{p.barcode}</a>
-                        <span className="ml-auto text-xs text-slate-500">
+                        {p.valid_until && <span className="ml-auto text-xs text-slate-500">
                           {t("έως", "until")} {fmt(p.valid_until)}
-                        </span>
-                        <span className="w-20 shrink-0 text-right font-semibold text-amber-600">{eur(p.value)}</span>
+                        </span>}
+                        {!isCy && <span className="w-20 shrink-0 text-right font-semibold text-amber-600">{eur(p.value)}</span>}
                       </div>
                       <ul className="mt-1.5 space-y-0.5">
                         {(p.items ?? []).map((x, j) => (
@@ -628,13 +632,13 @@ function Inner() {
                             <li key={j} className="text-[13px]">
                               <div className="flex flex-wrap items-baseline gap-2">
                                 <span className="font-mono font-semibold text-slate-800 dark:text-slate-100">{r.barcode}</span>
-                                <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${
+                                {!isCy && <span className={`rounded-md px-1.5 py-0.5 text-[10px] ${
                                   r.intangible ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
                                   {r.intangible ? t("άυλη — χωρίς χαρτί", "intangible — no paper")
                                                 : t("έντυπη", "printed")}
-                                </span>
+                                </span>}
                                 <span className="ml-auto text-xs text-slate-500">
-                                  {t("ανοίγει", "opens")} {fmt(r.opens_at)}
+                                  {isCy ? t("επόμενη φάση", "next step") : t("ανοίγει", "opens")} {fmt(r.opens_at)}
                                 </span>
                               </div>
                               {r.items.length > 0 && (
@@ -713,7 +717,7 @@ function Inner() {
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                   <input value={term} onChange={(e) => setTerm(e.target.value)}
-                    placeholder={t("Πρόσθεσε τρόφιμο — όνομα ή ΑΜΚΑ…", "Add resident — name or AMKA…")}
+                    placeholder={isCy ? t("Πρόσθεσε τρόφιμο — όνομα ή κωδικός ΟΑΥ…", "Add resident — name or HIO code…") : t("Πρόσθεσε τρόφιμο — όνομα ή ΑΜΚΑ…", "Add resident — name or AMKA…")}
                     className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
                 </div>
                 {hits.length > 0 && (

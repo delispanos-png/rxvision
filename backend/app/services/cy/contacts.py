@@ -37,6 +37,21 @@ SEGMENTS: dict[str, tuple[str, str, bool]] = {
     "lost": ("Χαμένοι πελάτες (συνταγή που δεν συνεχίστηκε)", "Lost customers (prescription not continued)", True),
     "diabetic": ("Διαβητικοί (από αναλώσιμα)", "Diabetics (from consumables)", True),
 }
+# Θεραπευτικά κοινά (Φάση 3): ίδιες 10 κατηγορίες με την Ελλάδα, από τον ATC των φαρμάκων που ΠΗΡΑΝ.
+# Δεδομένα υγείας → ΠΑΝΤΑ μόνο μήνυμα φροντίδας.
+_THERAPY_EN = {"diabetes": "Diabetes", "hypertension": "Hypertension", "cardio": "Cardiology",
+               "cholesterol": "Cholesterol", "thyroid": "Thyroid", "respiratory": "Respiratory",
+               "allergy": "Allergies", "psych": "Neuro/Psych", "osteo": "Osteoporosis", "gastro": "Gastrointestinal"}
+
+
+def _therapy_segments() -> dict[str, tuple[str, str, bool]]:
+    from app.services.marketing import THERAPY_CATEGORIES
+    return {f"therapy:{c['key']}": (f"Θεραπεία: {c['label']} (από τα φάρμακα)",
+                                    f"Therapy: {_THERAPY_EN.get(c['key'], c['key'])} (from medicines)", True)
+            for c in THERAPY_CATEGORIES}
+
+
+SEGMENTS.update(_therapy_segments())
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -179,6 +194,13 @@ async def segment_refs(tenant_id: str, segment: str, *, today: date | None = Non
                 if c["status"] == segment and c["patient_ref"]}
     if segment == "lost":
         return {i["patient_ref"] for i in (await ch.lost_customers(tenant_id, today=today))["items"]}
+    if segment.startswith("therapy:"):
+        from app.services.cy import marketing as cy_marketing
+        key = segment.split(":", 1)[1]
+        br = await cy_marketing.therapy_breakdown(tenant_id)
+        if key not in br:
+            raise ValueError("unknown_segment")
+        return set(br[key]["patients"])
     if segment == "diabetic":
         from app.services.cy import insights
         return {p["patient_ref"] for p in (await insights.consumables(tenant_id, today=today))["patients"]
@@ -202,12 +224,17 @@ async def _capped(tenant_id: str) -> set[str]:
 
 
 async def audience(tenant_id: str, channel: str, segment: str = "all", *,
-                   today: date | None = None) -> dict[str, Any]:
+                   today: date | None = None, only: set[str] | None = None) -> dict[str, Any]:
     """Παραλήπτες στο σχήμα που περιμένει το `campaign_engine`, μαζί με το πόσοι εξαιρέθηκαν και γιατί."""
     if channel not in CHANNELS:
         raise ValueError("bad_channel")
     refs = await segment_refs(tenant_id, segment, today=today)
-    q: dict[str, Any] = {"erased": {"$ne": True}}
+    if only is not None:
+        # αυτοματισμός: ΜΟΝΟ οι συγκεκριμένοι (`cy:<pseudo>`) — ποτέ όλο το κοινό
+        own = {r[len(PREFIX):] for r in only if str(r).startswith(PREFIX)}
+        refs = own if refs is None else (refs & own)
+    # ΠΟΤΕ μήνυμα σε πελάτη που σημειώθηκε ότι απεβίωσε
+    q: dict[str, Any] = {"erased": {"$ne": True}, "deceased.at": {"$exists": False}}
     if refs is not None:
         q["pseudo_id"] = {"$in": list(refs)}
     pats = await _find_all(tenant_id, q)

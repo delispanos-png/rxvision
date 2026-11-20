@@ -63,10 +63,10 @@ async def nutrition_assign(
         from app.services import push_service
         # ίδιο μοτίβο με τον worker υπενθυμίσεων: patient_ref → ΑΜΚΑ → λογαριασμός πύλης
         from bson import ObjectId
-        pa = await db["patients_anonymized"].find_one(
-            {"_id": ObjectId(patient_id), "tenant_id": ctx.tenant_id}, {"amka": 1})
-        acc = (await PatientAccountRepository().get_by_amka((pa or {}).get("amka"))
-               if (pa or {}).get("amka") else None)
+
+        from app.workers.reminders import _account_for
+        # ΑΜΚΑ → λογαριασμός (Ελλάδα) ή σύνδεσμος της καρτέλας πύλης (Κύπρος) — ΕΝΑΣ κανόνας
+        acc = await _account_for(db, PatientAccountRepository(), ObjectId(patient_id), ctx.tenant_id)
         if acc:
             await push_service.send_to_account(
                 str(acc["_id"]), title="🥗 Νέα πρόταση διατροφής",
@@ -152,6 +152,9 @@ async def recall(
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
     """Recall list — patients with a missed/available repeat, ranked by € at risk."""
+    from app.api.v1.routers.patient_intelligence import _is_cy, _repo
+    if await _is_cy(ctx):   # Κύπρος: ίδια οθόνη, αλυσίδες ΓεΣΥ (repositories/cy_intelligence.py)
+        return await (await _repo(ctx)).recall()
     return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).recall()
 
 
@@ -161,6 +164,9 @@ async def recall_detail(
     ctx: TenantContext = Depends(require("patients:read", module="patient_analytics")),
 ):
     """Drill-down: οι επαναλαμβανόμενες συνταγές ενός πελάτη με τις χαμένες/διαθέσιμες επαναλήψεις."""
+    from app.api.v1.routers.patient_intelligence import _is_cy, _repo
+    if await _is_cy(ctx):
+        return await (await _repo(ctx)).recall_detail(patient_id)
     return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).recall_detail(patient_id)
 
 

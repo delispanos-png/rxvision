@@ -106,6 +106,10 @@ class PharmacyChatRepository:
                     "message": "Δεν βρέθηκε φαρμακείο με αυτό το ΑΦΜ στο RxVision."}
         if target == self.me:
             return {"ok": False, "error": "self", "message": "Αυτό είναι το δικό σου ΑΦΜ."}
+        from app.services import pharmacy_directory
+        block = await pharmacy_directory.country_block(self.me, target)
+        if block:
+            return block
         if target in (g.get("members") or []):
             return {"ok": False, "error": "already", "message": "Είναι ήδη στην ομάδα."}
         block = await self._subscription_block(target)

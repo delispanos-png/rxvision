@@ -104,16 +104,25 @@ class CopilotRoutineRepository(BaseRepository):
     def _runs(self):
         return self._db["copilot_routine_runs"]
 
+    async def _catalog(self) -> tuple[dict, dict, bool]:
+        """(αναφορές, κοινά μηνυμάτων, είναι Κύπρος) — ΕΝΑ σημείο απόφασης χώρας για τις ρουτίνες."""
+        from app.services.cy.gate import tenant_country
+        if await tenant_country(self.tenant_id) == "CY":
+            from app.services.cy import copilot as cy_copilot
+            return cy_copilot.REPORT_TOOLS, cy_copilot.MESSAGE_SEGMENTS, True
+        return copilot_service.REPORT_TOOLS, MESSAGE_SEGMENTS, False
+
     # ── CRUD ────────────────────────────────────────────────────
     async def list(self) -> list[dict]:
+        reports, segments, _cy = await self._catalog()
         items = [r async for r in self._coll.find({"tenant_id": self.tenant_id}).sort("created_at", -1)]
         for r in items:
             r["schedule_label"] = schedule_label(r.get("schedule") or {})
             if r.get("action") == "message":
-                seg = MESSAGE_SEGMENTS.get(r.get("segment"), r.get("segment"))
+                seg = segments.get(r.get("segment"), r.get("segment"))
                 r["report_label"] = f"{(r.get('channel') or '').upper()} → {seg}"
             else:
-                r["report_label"] = copilot_service.REPORT_TOOLS.get(r.get("report_tool"), r.get("report_tool"))
+                r["report_label"] = reports.get(r.get("report_tool"), r.get("report_tool"))
         return jsonsafe(items)
 
     async def create(self, *, user: str, name: str, schedule: dict, action: str = "report",
@@ -123,6 +132,7 @@ class CopilotRoutineRepository(BaseRepository):
                      segment: str = "all", value: str | None = None, mode: str = "draft",
                      max_recipients: int = 200) -> dict:
         now = _now()
+        reports, segments, _cy = await self._catalog()
         doc = {
             "tenant_id": self.tenant_id,
             "name": (name or "Ρουτίνα").strip()[:120],
@@ -140,7 +150,7 @@ class CopilotRoutineRepository(BaseRepository):
                 return {"ok": False, "error": "bad_channel"}
             if not (message or "").strip():
                 return {"ok": False, "error": "empty_message"}
-            if segment not in MESSAGE_SEGMENTS:
+            if segment not in segments:
                 return {"ok": False, "error": "bad_segment"}
             doc.update({
                 "channel": channel, "subject": (subject or "").strip() or None,
@@ -149,7 +159,7 @@ class CopilotRoutineRepository(BaseRepository):
                 "max_recipients": max(1, min(int(max_recipients or 200), 5000)),
             })
         else:
-            if report_tool not in copilot_service.REPORT_TOOLS:
+            if report_tool not in reports:
                 return {"ok": False, "error": "unknown_report_tool"}
             doc.update({
                 "report_tool": report_tool, "report_args": report_args or {},
@@ -167,8 +177,11 @@ class CopilotRoutineRepository(BaseRepository):
         allowed = {k: v for k, v in patch.items()
                    if k in ("name", "schedule", "report_tool", "report_args", "delivery", "email", "enabled",
                             "channel", "subject", "message", "segment", "value", "mode", "max_recipients")}
-        if "report_tool" in allowed and allowed["report_tool"] not in copilot_service.REPORT_TOOLS:
+        reports, segments, _cy = await self._catalog()
+        if "report_tool" in allowed and allowed["report_tool"] not in reports:
             return {"ok": False, "error": "unknown_report_tool"}
+        if "segment" in allowed and allowed["segment"] not in segments:
+            return {"ok": False, "error": "bad_segment"}
         allowed["updated_at"] = _now()
         if "schedule" in allowed:                        # reschedule → recompute next firing
             allowed["next_run"] = next_run(allowed["schedule"], _now())
@@ -201,6 +214,10 @@ class CopilotRoutineRepository(BaseRepository):
 
     @staticmethod
     def _sent_report(title: str, res: dict) -> str:
+        if res.get("error") == "clinical_segment":
+            return f"⚠️ «{title}»: κοινό με δεδομένα υγείας — στέλνεται μόνο από Marketing → Καμπάνιες."
+        if res.get("queued") is not None:          # Κύπρος: ουρά αποστολής (campaign_engine)
+            return f"✅ «{title}»: μπήκε στην ουρά αποστολής για {res['queued']} παραλήπτες."
         txt = f"✅ «{title}»: στάλθηκε σε {res.get('sent', 0)}/{res.get('recipients', 0)} παραλήπτες."
         if res.get("failed"):
             txt += f" ({res['failed']} αποτυχίες)"
@@ -267,8 +284,13 @@ class CopilotRoutineRepository(BaseRepository):
                    "report": f"⚠️ «{title}»: το module επικοινωνιών (patient_analytics) δεν είναι ενεργό."}
             ins = await self._runs().insert_one(run)
             return {"ok": False, "status": "failed", "report": run["report"], "run_id": ins.inserted_id}
+        _r, _s, cy = await self._catalog()
         try:
-            audience = await comms.campaign_audience(self.tenant_id, channel, segment, value)
+            if cy:
+                from app.services.cy import contacts as cy_contacts
+                audience = (await cy_contacts.audience(self.tenant_id, channel, segment))["recipients"]
+            else:
+                audience = await comms.campaign_audience(self.tenant_id, channel, segment, value)
         except Exception:  # noqa: BLE001
             audience = []
         count = len(audience)
@@ -287,9 +309,7 @@ class CopilotRoutineRepository(BaseRepository):
 
         auto = routine.get("mode") == "auto" and count <= int(routine.get("max_recipients", 200))
         if auto:
-            res = await comms.run_campaign(self.tenant_id, channel=channel, message=spec["message"],
-                                           subject=spec["subject"], segment=segment, value=value,
-                                           source="routine")
+            res = await self._send(spec, cy=cy)
             report = self._sent_report(title, res)
             run = {**base, "ok": True, "status": "sent", "sent": res["sent"], "failed": res["failed"],
                    "report": report}
@@ -305,6 +325,28 @@ class CopilotRoutineRepository(BaseRepository):
         return {"ok": True, "status": "pending_approval", "needs_approval": True, "report": report,
                 "run_id": ins.inserted_id}
 
+    async def _send(self, spec: dict, *, cy: bool) -> dict:
+        """Αποστολή μηνύματος ρουτίνας. Κύπρος: ΙΔΙΑ ουρά/χρέωση/ιδιοπάθεια με τις Καμπάνιες Κύπρου
+        (campaign_engine) — φεύγει στο παρασκήνιο, άρα αναφέρουμε «μπήκαν στην ουρά»."""
+        if not cy:
+            return await comms.run_campaign(self.tenant_id, channel=spec.get("channel"),
+                                            message=spec.get("message"), subject=spec.get("subject"),
+                                            segment=spec.get("segment", "all"), value=spec.get("value"),
+                                            source="routine")
+        from app.services import campaign_engine
+        from app.services.cy.contacts import clinical
+        from app.workers.comms import dispatch_campaign
+        seg = spec.get("segment", "all")
+        if clinical(seg):                       # δεν περνά από τη δημιουργία — δεύτερη δικλείδα
+            return {"sent": 0, "failed": 0, "queued": 0, "error": "clinical_segment"}
+        res = await campaign_engine.create(self.tenant_id, channel=spec.get("channel"), message=spec.get("message"),
+                                           subject=spec.get("subject"), segment=seg, value=None,
+                                           by="routine", source="routine")
+        if res["recipients"]:
+            dispatch_campaign.delay(res["campaign_id"])
+        return {"sent": res["recipients"], "recipients": res["recipients"], "failed": 0,
+                "queued": res["recipients"]}
+
     # ── approve / reject a queued message run (explicit human authorization to send) ─────────
     async def approve_run(self, run_id: str) -> dict:
         oid = _oid(run_id)
@@ -316,9 +358,7 @@ class CopilotRoutineRepository(BaseRepository):
         if not await self._module_on():
             return {"ok": False, "error": "module_locked"}
         spec = run.get("spec") or {}
-        res = await comms.run_campaign(self.tenant_id, channel=spec.get("channel"), message=spec.get("message"),
-                                       subject=spec.get("subject"), segment=spec.get("segment", "all"),
-                                       value=spec.get("value"), source="routine")
+        res = await self._send(spec, cy=(await self._catalog())[2])
         report = self._sent_report(run.get("routine_name") or "Μήνυμα", res)
         await self._runs().update_one({"_id": oid}, {"$set": {
             "status": "sent", "sent": res["sent"], "failed": res["failed"], "report": report,

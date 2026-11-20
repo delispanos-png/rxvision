@@ -24,6 +24,7 @@ import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 
 type Group = { _id: string; name: string; member_count: number };
 type GroupPage = { items: Group[]; total: number };
@@ -61,6 +62,12 @@ export default function FamiliesPage() {
 
 function Inner() {
   const t = useT();
+  // Κύπρος: μέλη = πελάτες ΓεΣΥ (κωδικός ΟΑΥ αντί για ΑΜΚΑ), σύνδεσμοι στις οθόνες Κύπρου
+  const isCy = useCountry() === "CY";
+  const ID = isCy ? t("κωδικό ΟΑΥ", "HIO code") : t("ΑΜΚΑ", "AMKA");
+  const rxHref = (code: string, patientId?: string) => isCy
+    ? (patientId ? `/cy/patients/${encodeURIComponent(patientId)}` : `/cy/dispensings/${encodeURIComponent(code)}`)
+    : `/prescriptions/${encodeURIComponent(code)}`;
   const qc = useQueryClient();
   const [sel, setSel] = useState<string | null>(null);
   const [who, setWho] = useState<string | null>(null);   // null = όλη η οικογένεια
@@ -137,6 +144,7 @@ function Inner() {
         r.error === "already_member" ? t("Είναι ήδη μέλος.", "Already a member.")
         : r.error === "bad_amka" ? t("Το ΑΜΚΑ πρέπει να είναι 11 ψηφία.", "AMKA must be 11 digits.")
         : r.error === "deceased" ? t("Ο ασφαλισμένος είναι θανών.", "This person is deceased.")
+        : r.error === "no_patient" ? t("Δεν βρέθηκε πελάτης με αυτόν τον κωδικό — προστίθεται μόλις έρθει η πρώτη του εκτέλεση ΓεΣΥ.", "No customer with this code — they can be added once their first GHS dispensing arrives.")
         : t("Δεν προστέθηκε.", "Could not add."));
       return;
     }
@@ -144,9 +152,10 @@ function Inner() {
   }
   async function addByAmka() {
     const amka = await appPrompt(
-      t("ΑΜΚΑ μέλους — μπορείς να προσθέσεις και άτομο που δεν έχει έρθει ποτέ· θα συνδεθεί μόνο του με την πρώτη του συνταγή.",
+      isCy ? t("Κωδικός ΟΑΥ μέλους (πελάτης που έχει ήδη έρθει με συνταγή ΓεΣΥ).", "Member HIO code (a customer who already has a GHS dispensing).")
+        : t("ΑΜΚΑ μέλους — μπορείς να προσθέσεις και άτομο που δεν έχει έρθει ποτέ· θα συνδεθεί μόνο του με την πρώτη του συνταγή.",
         "Member AMKA — you can add someone with no history; they link automatically."),
-      { placeholder: "01018012345" });
+      { placeholder: isCy ? "912345" : "01018012345" });
     if (!amka?.trim()) return;
     const label = await appPrompt(t("Όνομα (προαιρετικό)", "Name (optional)"));
     await addMember({ amka: amka.trim(), label: label || null });
@@ -208,12 +217,12 @@ function Inner() {
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
               <input value={fq} onChange={(e) => setFq(e.target.value)}
-                placeholder={t("Αναζήτηση: όνομα οικογένειας, ή ΑΜΚΑ / όνομα μέλους…",
+                placeholder={isCy ? t("Αναζήτηση: όνομα οικογένειας, ή κωδικός ΟΑΥ / όνομα μέλους…", "Search: family name, or member HIO code / name…") : t("Αναζήτηση: όνομα οικογένειας, ή ΑΜΚΑ / όνομα μέλους…",
                                "Search: family name, or member AMKA / name…")}
                 className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
             </div>
             <p className="mt-2 text-xs text-slate-400">
-              {t("Δεν θυμάσαι πώς ονόμασες την οικογένεια; Γράψε το ΑΜΚΑ ή το όνομα ενός μέλους.",
+              {isCy ? t("Δεν θυμάσαι πώς ονόμασες την οικογένεια; Γράψε τον κωδικό ΟΑΥ ή το όνομα ενός μέλους.", "Can't remember the family name? Type a member's HIO code or name.") : t("Δεν θυμάσαι πώς ονόμασες την οικογένεια; Γράψε το ΑΜΚΑ ή το όνομα ενός μέλους.",
                  "Cannot recall the family name? Type a member AMKA or name.")}
             </p>
           </div>
@@ -312,12 +321,12 @@ function Inner() {
                       <div className="relative min-w-[220px] flex-1">
                         <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                         <input autoFocus value={term} onChange={(e) => setTerm(e.target.value)}
-                          placeholder={t("Όνομα ή ΑΜΚΑ…", "Name or AMKA…")}
+                          placeholder={`${t("Όνομα ή", "Name or")} ${ID}…`}
                           className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
                       </div>
                       <button onClick={addByAmka}
                         className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-white dark:border-slate-700 dark:text-slate-200">
-                        {t("Με ΑΜΚΑ", "By AMKA")}
+                        {t("Με", "By")} {ID}
                       </button>
                     </div>
                     {hits.length > 0 && (
@@ -362,7 +371,7 @@ function Inner() {
                     <UserMinus className="h-3.5 w-3.5" /> {t("Αφαίρεση από την οικογένεια", "Remove from family")}
                   </button>
                     {cur.patient_id && (
-                    <Link href={`/patients/${cur.patient_id}`}
+                    <Link href={isCy ? `/cy/patients/${encodeURIComponent(cur.patient_id)}` : `/patients/${cur.patient_id}`}
                       className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-rose-600 hover:underline">
                         {t("Πλήρης καρτέλα", "Full record")} <ChevronRight className="h-3 w-3" />
                     </Link>
@@ -376,9 +385,14 @@ function Inner() {
                 <Stat label={t("Εκτελέσεις", "Executions")}
                       value={String(cur ? cur.executions : d.totals.executions)} />
                 <Stat label={t("Αξία", "Value")} value={eur(cur ? cur.value : d.totals.value)} />
+                {isCy ? (() => {
+                  // Κύπρος: το ΓεΣΥ δεν δίνει αξία για ό,τι δεν δόθηκε → πλήθος, όχι «0,00 €»
+                  const n = cur ? cur.unexec : d.members.reduce((a, m) => a + (m.unexec || 0), 0);
+                  return <Stat label={t("Δεν δόθηκαν", "Not dispensed")} value={String(n)} tone={n > 0 ? "warn" : undefined} />;
+                })() : (
                 <Stat label={t("Εκκρεμεί", "Pending")}
                       value={eur(cur ? cur.unexec_value : d.totals.unexec_value)}
-                      tone={(cur ? cur.unexec_value : d.totals.unexec_value) > 0 ? "warn" : undefined} />
+                      tone={(cur ? cur.unexec_value : d.totals.unexec_value) > 0 ? "warn" : undefined} />)}
                 <Stat label={t("Δανεικά", "Loans")}
                       value={String(cur ? cur.loans : d.totals.loans)}
                       tone={(cur ? cur.loans : d.totals.loans) > 0 ? "warn" : undefined} />
@@ -399,12 +413,12 @@ function Inner() {
                       <li key={i} className="px-4 py-2 text-sm">
                         <div className="flex flex-wrap items-center gap-2">
                           {!who && <b className="text-slate-700 dark:text-slate-200">{p.name}</b>}
-                          <Link href={`/prescriptions/${encodeURIComponent(p.barcode)}`}
+                          <Link href={rxHref(p.barcode)}
                                 className="text-xs text-rose-600 hover:underline">{p.barcode}</Link>
-                          <span className="ml-auto text-xs text-slate-500">
+                          {p.valid_until && <span className="ml-auto text-xs text-slate-500">
                             {t("έως", "until")} {fmt(p.valid_until)}
-                          </span>
-                          <span className="w-20 text-right font-medium text-amber-600">{eur(p.value)}</span>
+                          </span>}
+                          {!isCy && <span className="w-20 text-right font-medium text-amber-600">{eur(p.value)}</span>}
                         </div>
                         <div className="mt-0.5 text-xs text-slate-500">
                           {p.items.map((x) => `${x.name ?? "—"} ×${x.left}`).join(" · ")}
@@ -420,7 +434,7 @@ function Inner() {
                       <li key={i} className="px-4 py-2 text-sm">
                         <div className="flex flex-wrap items-center gap-2">
                           {!who && <b className="text-slate-700 dark:text-slate-200">{o.name}</b>}
-                          <Link href={`/prescriptions/${encodeURIComponent(o.barcode)}`}
+                          <Link href={rxHref(o.barcode, isCy ? o.patient_id : undefined)}
                                 className="text-xs text-rose-600 hover:underline">{o.barcode}</Link>
                           <span className="ml-auto font-medium text-rose-600">{fmt(o.opens_at)}</span>
                         </div>
@@ -448,7 +462,7 @@ function Inner() {
                       <li key={i} className="px-4 py-2 text-sm">
                         <div className="flex flex-wrap items-center gap-2">
                           {!who && <b className="text-slate-700 dark:text-slate-200">{r.name}</b>}
-                          <Link href={`/prescriptions/${encodeURIComponent(r.external_id)}`}
+                          <Link href={rxHref(r.external_id)}
                                 className="text-xs text-rose-600 hover:underline">{r.barcode}</Link>
                           {r.partial && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
                             {t("μερική", "partial")}</span>}

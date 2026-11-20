@@ -9,6 +9,7 @@ Type 02 αναλώσιμα). Πραγματικά XML (ονόματα/ταυτό
 from __future__ import annotations
 
 import pytest
+from fastapi import Request
 
 from app.services.cy.parser import CyParseError, parse_dispensing, parse_dosage, parse_emvs
 
@@ -216,8 +217,9 @@ async def _gate(tenant_id):
         pass
     ctx = Ctx()
     ctx.tenant_id = tenant_id
+    req = type("Req", (), {"state": type("State", (), {})()})()
     try:
-        await require_cy(ctx)
+        await require_cy(req, ctx)
         return 200
     except HTTPException as exc:
         return exc.status_code
@@ -981,3 +983,1101 @@ async def test_release_notes_are_per_country(mem):
     assert gr == ["1.73.0", "1.70.0"], "ο Έλληνας δεν βλέπει κυπριακές σημειώσεις"
     assert cy == ["1.73.0", "1.72.0"], "ο Κύπριος δεν βλέπει τις παλιές ελληνικές (ΗΔΥΚΑ)"
     assert (await rn.mark_seen(CY))["last_version"] == "1.73.0"
+
+
+# ── Πρόγραμμα λήψης (πύλη) & Patient Intelligence ─────────────────────────────────────────────
+
+def test_cy_dosage_becomes_intake_plan():
+    from app.services.cy.meds import plan_for
+    assert plan_for(2.0)["slots"] == ["morning", "evening"]
+    assert plan_for(1.0, "AFTER DINNER")["slots"] == ["evening"], "«μετά το δείπνο» = βραδινή δόση"
+    assert plan_for(1.0, "AFTER BREAKFAST")["slots"] == ["morning"]
+    assert plan_for(3.0)["per_day"] == 3
+    assert plan_for(None)["kind"] == "unknown", "χωρίς συχνότητα: καμία μαντεψιά"
+    assert plan_for(2 / 7)["kind"] == "weekly" and plan_for(2 / 7)["times_per_week"] == 2
+
+
+async def test_cy_portal_medication_schedule_and_reminder_account(mem, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.api.v1.routers import cy as cy_router
+    from app.repositories.patient_portal import PatientAccountRepository, PatientRxRepository
+    from app.workers.reminders import _account_for
+    ref = await _portal_setup(mem, monkeypatch)
+    await mem["cy_dispensings"].update_many(
+        {}, {"$set": {"dispensed_at": datetime.now(timezone.utc) - timedelta(days=3)}})
+    await cy_router.portal_invite(ref, cy_router.PortalInviteIn(doc_type="NID", doc_number="999001", email="c@d.cy"), _Ctx(CY))
+    accrepo = PatientAccountRepository()
+    shell = await accrepo.cy_shell_id(CY, ref)
+    rx = PatientRxRepository(tenant_id=CY)
+    s = await rx.medication_schedule(str(shell))
+    assert s["country"] == "CY"
+    names = {t["name"]: t for t in s["therapies"]}
+    assert "JIVOLAR TABLET, FILM COATED 50MG/850MG" in names
+    jiv = names["JIVOLAR TABLET, FILM COATED 50MG/850MG"]
+    assert jiv["med_key"].startswith("cy:") and jiv["per_day"] == 2 and jiv["days_left"] is not None
+    assert all(t["name"] and "lancet" not in t["name"].lower() for t in s["therapies"]), "όχι αναλώσιμα"
+    # ο ασθενής ανάβει υπενθύμιση → το ημερολόγιο γεμίζει, και ο worker βρίσκει τον λογαριασμό χωρίς ΑΜΚΑ
+    await rx.set_reminder(str(shell), jiv["med_key"], True)
+    s = await rx.medication_schedule(str(shell))
+    assert any(d["slots"] for d in s["week"])
+    acc = await _account_for(mem, accrepo, shell, CY)
+    assert acc and acc.get("email") == "c@d.cy"
+    # παλιά εκτέλεση (πέρασε η διάρκεια) → δεν είναι ενεργή αγωγή
+    await mem["cy_dispensings"].update_many(
+        {}, {"$set": {"dispensed_at": datetime.now(timezone.utc) - timedelta(days=120)}})
+    assert (await rx.medication_schedule(str(shell)))["therapies"] == []
+
+
+
+# ── Patient Intelligence: ΙΔΙΕΣ οθόνες με την Ελλάδα, δεδομένα ΓεΣΥ ─────────────────────────────
+
+async def _pi_seed(mem):
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.cy.importer import import_files
+    now = datetime.now(timezone.utc)
+    ts = lambda d: (now - timedelta(days=d)).strftime("%Y-%m-%d %H:%M:%S +0000")  # noqa: E731
+    # Α: φάση 2/6 πριν 25 ημ. → η 3η έρχεται σύντομα (διαθέσιμη)· Β: φάση 1/6 πριν 120 ημ. → χάθηκε
+    await import_files(CY, [("a1", _rx("PA", "DA1", "N-A", ts(53), 1)), ("a2", _rx("PA", "DA2", "N-A", ts(25), 2)),
+                            ("b1", _rx("PB", "DB1", "N-B", ts(120), 1))], pepper="p")
+    a = (await mem["cy_dispensings"].find_one({"dispensing_id": "DA2"}))["patient_ref"]
+    b = (await mem["cy_dispensings"].find_one({"dispensing_id": "DB1"}))["patient_ref"]
+    return a, b
+
+
+async def test_cy_patient_intelligence_reuses_greek_views(mem):
+    from app.repositories.cy_intelligence import CyPatientIntelligenceRepository
+    a, b = await _pi_seed(mem)
+    repo = CyPatientIntelligenceRepository(tenant_id=CY)
+    ov = await repo.overview()
+    assert ov["total_patients"] == 2 and ov["kpis"]["recall_patients"]["value"] == 2
+    assert ov["trend"]["monthly"] and sum(x["rx"] for x in ov["trend"]["monthly"]) == 3
+    comp = await repo.compliance()
+    by = {x["patient_id"]: x for x in comp["items"]}
+    assert by[a]["compliance"] == 100 and by[b]["missed"] >= 1 and by[b]["compliance"] < 50
+    rec = await repo.recall()
+    assert {x["patient_id"] for x in rec["items"]} == {a, b}
+    assert next(x for x in rec["items"] if x["patient_id"] == a)["available"] == 1
+    det = await repo.recall_detail(b)
+    assert det["found"] and det["chains"][0]["missed"] >= 1 and det["chains"][0]["windows"]
+    risk = await repo.risk()
+    assert any(x["patient_id"] == b for x in risk["items"])
+    vip = await repo.vip()
+    assert vip["total"] == 2 and {x["patient_id"] for x in vip["items"]} == {a, b}
+    wb = await repo.winback()
+    assert any(x["patient_id"] == b for x in wb["items"]), "λείπει 120 ημέρες → Win-Back"
+    pt = await repo.patients_table()
+    assert pt["total"] == 2 and all(x["amka"] for x in pt["items"]), "ο κωδικός ΟΑΥ στη θέση του ΑΜΚΑ"
+    td = await repo.today()
+    assert td["rx"] == 0 and td["expected_absent"] == 2
+    seg = await repo.segments()
+    assert seg["segments"][0]["key"] == "diabetes"
+
+
+async def test_cy_patient_360_found_by_id_or_prescription(mem, monkeypatch):
+    from app.repositories.cy_intelligence import CyPatientIntelligenceRepository
+    from app.services.vault_service import vault
+    monkeypatch.setattr(vault, "tenant_pepper", lambda tid: "p")
+    from app.services.cy.importer import import_files
+    await import_files(CY, [("a.xml", DRUG_XML.encode())], pepper="p")
+    ref = (await mem["cy_patients"].find_one({}))["pseudo_id"]
+    repo = CyPatientIntelligenceRepository(tenant_id=CY)
+    assert await repo.find_patient(amka="999 001") == ref, "αριθμός ταυτότητας (ψευδωνυμοποιείται, δεν αποθηκεύεται)"
+    assert await repo.find_patient(amka="900001") == ref, "κωδικός ΟΑΥ"
+    rx = (await mem["cy_dispensings"].find_one({}))["prescription_id"]
+    assert await repo.find_patient(barcode=rx) == ref and await repo.find_patient(amka=rx) == ref
+    assert await repo.find_patient(amka="123456") is None
+    prof = await repo.patient_profile(amka="999001")
+    assert prof["found"] and prof["country"] == "CY" and prof["patient"]["amka"] == "900001"
+    assert prof["financials"]["rx_count"] == 1 and prof["medicines"] and prof["executions"][0]["cy_id"]
+    assert prof["conditions"] == [], "το XML ΓεΣΥ δεν έχει διαγνώσεις — καμία επινόηση"
+    assert (await repo.patient_profile(amka="nobody"))["found"] is False
+
+
+async def test_greek_only_profile_endpoints_404_for_cyprus(mem):
+    from fastapi import HTTPException
+
+    from app.api.v1.routers import patient_intelligence as pi
+    from app.services.cy import gate
+    await gate.set_cy_enabled(True)
+    with pytest.raises(HTTPException) as e:
+        await pi._greek_only(_Ctx(CY))
+    assert e.value.status_code == 404
+    await pi._greek_only(_Ctx(GR))   # ελληνικό φαρμακείο: περνά
+
+
+async def test_cyprus_release_notes_have_their_own_numbering(mem):
+    from app.services import release_notes as rn
+    await rn.upsert("1.0.0", title="GR", items=[{"title": "ελληνικό"}], published=True, country="GR")
+    await rn.upsert("1.0.0", title="CY", items=[{"title": "κυπριακό"}], published=True, country="CY")
+    gr = await rn.for_tenant(GR)
+    cy = await rn.for_tenant(CY)
+    assert [n["title"] for n in gr["items"]] == ["GR"] and [n["title"] for n in cy["items"]] == ["CY"]
+    assert cy["items"][0]["version"] == "1.0.0", "ο Κύπριος βλέπει σκέτο «1.0.0», όχι «CY:1.0.0»"
+    assert {(n["country"], n["version"]) for n in await rn.admin_list()} >= {("GR", "1.0.0"), ("CY", "1.0.0")}
+    await rn.delete("1.0.0", "CY")
+    assert (await rn.for_tenant(CY))["items"] == [] and (await rn.for_tenant(GR))["items"]
+
+
+# ── PharmacyOne: εκτελέσεις + κατάλογος ειδών (ψεύτικος server — καμία πραγματική κλήση) ────────
+
+def _p1_client(handler):
+    import httpx
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def test_pharmacyone_executions_paged_into_importer(mem, monkeypatch):
+    import httpx
+
+    from app.services.cy import pharmacyone as p1
+    from app.services.vault_service import vault
+    monkeypatch.setattr(vault, "tenant_pepper", lambda tid: "p")
+    p1.set_client_id(CY, "6a3e3d2c6b5b700aa9af18e7")
+    seen = []
+
+    def handler(req: httpx.Request):
+        assert req.headers["X-Client-Id"] == "6a3e3d2c6b5b700aa9af18e7"
+        seen.append(dict(req.url.params))
+        if "cursor" not in req.url.params:
+            return httpx.Response(200, json={"executions": [{"id": "e1", "xml": DRUG_XML, "filename": "a.xml"},
+                                                            {"id": "e2", "xml": None}],
+                                             "count": 2, "has_more": True, "next_cursor": "C2", "total": 3})
+        return httpx.Response(200, json={"executions": [{"id": "e3", "xml": CONS_XML}], "count": 1,
+                                         "has_more": False, "next_cursor": None})
+    async with _p1_client(handler) as c:
+        r = await p1.sync_executions(CY, client=c)
+    assert r["ok"] and r["fetched"] == 3 and r["imported"] == 2 and r["no_xml"] == 1 and r["full"]
+    assert seen[0]["status"] == "Sent,Resent" and seen[0]["order"] == "asc" and seen[0]["include_xml"] == "true"
+    assert "date_from" not in seen[0], "πρώτη φορά: όλο το ιστορικό"
+    assert await mem["cy_dispensings"].count_documents({"tenant_id": CY}) == 2
+    seen.clear()
+    async with _p1_client(handler) as c:
+        r2 = await p1.sync_executions(CY, client=c)
+    assert "date_from" in seen[0], "μετά: μόνο το πρόσφατο παράθυρο"
+    assert r2["imported"] == 0 and r2["duplicates"] == 2, "καμία διπλή μέτρηση"
+
+
+async def test_pharmacyone_401_is_not_retried(mem):
+    import httpx
+
+    from app.services.cy import pharmacyone as p1
+    p1.set_client_id(CY, "6a3e3d2c6b5b700aa9af18e7")
+    calls = []
+
+    def handler(req):
+        calls.append(1)
+        return httpx.Response(401, json={"detail": "unknown client"})
+    async with _p1_client(handler) as c:
+        with pytest.raises(p1.PharmacyOneError) as e:
+            await p1.sync_executions(CY, client=c)
+    assert e.value.code == "unauthorized" and len(calls) == 1
+    assert (await p1.state(CY))["last_result"]["ok"] is False
+    assert not p1.valid_client_id("not-an-id") and p1.hint("6a3e3d2c6b5b700aa9af18e7") == "••••18e7"
+
+
+async def test_pharmacyone_items_master_and_cyprus_catalog(mem):
+    import httpx
+
+    from app.services import catalog_sync
+    from app.services.cy import pharmacyone as p1
+    p1.set_client_id(CY, "6a3e3d2c6b5b700aa9af18e7")
+    items = [{"id": "i1", "name": "PANADOL 500MG", "barcodes": ["5290000000011"], "drug_code": "D1",
+              "retail_price": "4.20", "wh_price": "3.10", "vat": "5", "update_date": "2026-11-01 10:00:00"},
+             {"id": "i2", "name": "SUN CREAM 50", "barcodes": ["5290000000028"], "retail_price": 12.5,
+              "vat": 0.19, "update_date": "2026-11-01 10:00:00"},
+             {"id": "i3", "name": "NO BARCODE", "barcodes": []}]
+
+    def handler(req):
+        return httpx.Response(200, json={"items": items, "count": len(items), "has_more": False, "next_cursor": None})
+    async with _p1_client(handler) as c:
+        r = await p1.sync_items(full=True, client=c)
+    assert r["upserted"] == 3 and r["total_active"] == 3
+    rx = p1.to_product(items[0])
+    assert rx["type"] == "rx_medicine" and rx["price_cents"] == 420 and rx["wholesale_cents"] == 310 and rx["vat_rate"] == 5
+    para = p1.to_product(items[1])
+    assert para["type"] == "parapharmacy" and para["price_cents"] == 1250 and para["vat_rate"] == 19
+    assert p1.to_product(items[2]) is None
+    # ελληνικός «κύριος» κατάλογος με ΠΕΡΙΣΣΟΤΕΡΑ είδη: ΠΟΤΕ δεν περνά σε κυπριακό φαρμακείο
+    await mem["pharmacy_products"].insert_many([{"tenant_id": GR, "barcode": f"280{i}", "name": f"GR {i}",
+                                                 "type": "parapharmacy", "price_cents": 100} for i in range(5)])
+    await mem["tenants"].update_one({"_id": CY}, {"$set": {"catalog_sync.types": ["rx_medicine", "parapharmacy"]}})
+    res = await catalog_sync.run_for_tenant(CY)
+    names = {p["name"] async for p in mem["pharmacy_products"].find({"tenant_id": CY})}
+    assert res["added"] == 2 and names == {"PANADOL 500MG", "SUN CREAM 50"}
+    assert await catalog_sync.master_tenant(mem) == GR
+    # το είδος χάθηκε από την πηγή (συγχωνεύτηκε) → το πλήρες πέρασμα το απενεργοποιεί
+    items.pop(1)
+    async with _p1_client(handler) as c:
+        r = await p1.sync_items(full=True, client=c)
+    assert r["deactivated"] == 1
+
+
+# ── Ελλάδα ↔ Κύπρος: ΚΑΜΙΑ ανταλλαγή ειδών, τιμών ή μελών δικτύου (μόνιμοι φρουροί) ─────────────
+
+async def test_no_catalog_or_network_crosses_greece_cyprus(mem):
+    from fastapi import HTTPException
+
+    from app.api.v1.routers import admin
+    from app.services import catalog_sync, parapharmacy_classifier, pharmacy_directory
+    from app.services.ingestion.hdika_catalog import apply_rx_prices
+    # το κυπριακό φαρμακείο έχει τα ΠΕΡΙΣΣΟΤΕΡΑ είδη — και πάλι δεν γίνεται ποτέ «κύριος» κατάλογος
+    await mem["pharmacy_products"].insert_many(
+        [{"tenant_id": CY, "barcode": f"529{i}", "name": f"CY {i}", "type": "rx_medicine", "price_cents": 500}
+         for i in range(5)] + [{"tenant_id": GR, "barcode": "2801", "name": "GR", "type": "rx_medicine", "price_cents": 100}])
+    assert await catalog_sync.master_tenant(mem) == GR
+    assert await admin._master_catalog(mem) == GR
+    # κρατικές τιμές ΗΔΥΚΑ: ΠΟΤΕ σε κυπριακή αποθήκη (ακόμη κι αν ταιριάζει barcode)
+    await mem["medicine_catalog"].insert_one({"barcode": "5290", "retail_cents": 999, "wholesale_cents": 800})
+    await apply_rx_prices(mem)
+    assert (await mem["pharmacy_products"].find_one({"tenant_id": CY, "barcode": "5290"}))["price_cents"] == 500
+    # ο ελληνικός έτοιμος κατάλογος δεν φορτώνεται σε κυπριακό φαρμακείο
+    with pytest.raises(HTTPException) as e:
+        await admin._not_cyprus_target(CY)
+    assert e.value.detail == "cyprus_uses_pharmacyone"
+    await admin._not_cyprus_target(GR)
+    assert CY not in await parapharmacy_classifier._tenant_ids()
+    # δίκτυα Connect / συνομιλία: μόνο μέσα στην ίδια χώρα
+    assert (await pharmacy_directory.country_block(GR, CY))["error"] == "other_country"
+    assert await pharmacy_directory.country_block(CY, CY) is None
+
+
+async def test_catalog_settings_show_cyprus_source_not_greek(mem):
+    from app.api.v1.routers import pharmacy_catalog as pc
+    await mem["cy_catalog_items"].insert_one({"_id": "i1", "active": True, "raw": {"id": "i1"}})
+    cy = await pc.catalog_sync_settings(_Ctx(CY))
+    assert cy["country"] == "CY" and cy["source"]["name"] == "PharmacyOne" and cy["source"]["items"] == 1
+    assert [a["label"] for a in cy["available"]] == ["Φάρμακα", "Παραφάρμακα"]
+    gr = await pc.catalog_sync_settings(_Ctx(GR))
+    assert gr["country"] == "GR" and "source" not in gr and len(gr["available"]) == 3
+
+
+async def test_cy_catalog_real_item_shape_and_platform_id(mem):
+    from app.services.cy import pharmacyone as p1
+    # σχήμα όπως ήρθε από την PharmacyOne (18/11/2026)
+    med = {"id": "m1", "drug_code": "1000005", "barcodes": [], "name": "TRIMETHOPRIM ORAL SUSPENSION",
+           "supergroup": "MEDICINE", "vat": 5.0, "retail_price": 0.0, "wh_price": 0.0,
+           "atc_layers": {"atc_category1": "Φάρμακα Κατά Των Λοιμώξεων"},
+           "gesy": {"ATC": "J01EA01-1"}, "moh": {"retail_price": 34.01, "wholesale_price": 23.99}}
+    non = {"id": "n1", "drug_code": "", "barcodes": ["4008600411574", "04008600411574"], "name": "Nuk Soother",
+           "supergroup": "NON-MEDICINE", "vat": 19.0, "retail_price": 6.5, "wh_price": 3.9,
+           "bus_category1": "Μητέρα & Παιδί", "brand": "NUK"}
+    a = p1.to_product(med)
+    assert a["type"] == "rx_medicine" and a["atc"] == "J01EA01" and a["barcode"] == "1000005"
+    assert a["price_cents"] == 3401 and a["wholesale_cents"] == 2399, "τιμή μητρώου όταν η κύρια είναι 0"
+    assert a["category"] == "Φάρμακα Κατά Των Λοιμώξεων"
+    b = p1.to_product(non)
+    assert b["type"] == "parapharmacy" and b["barcode"] == "4008600411574" and b["brand"] == "NUK" and b["atc"] is None
+    assert b["category"] == "Μητέρα & Παιδί" and b["vat_rate"] == 19
+    # Κλειδί εφαρμογής: κρυπτογραφημένο στη βάση, ποτέ σε καθαρό κείμενο· σβήνει το παλιό Client Id καταλόγου
+    await mem["platform_settings"].update_one({"_id": "cy"}, {"$set": {"pharmacyone_client_id": "legacy"}}, upsert=True)
+    await p1.set_api_key("APPKEY-12345-abcde-18e7")
+    doc = await mem["platform_settings"].find_one({"_id": "cy"})
+    assert doc["pharmacyone_api_key"].startswith("enc:") and "APPKEY" not in doc["pharmacyone_api_key"]
+    assert await p1.api_key() == "APPKEY-12345-abcde-18e7" and doc["pharmacyone_client_id"] is None
+    await mem["cy_catalog_items"].insert_many([{"_id": "m1", "active": True, "raw": med},
+                                               {"_id": "n1", "active": True, "raw": non}])
+    st = await p1.catalog_stats()
+    assert st["configured"] and st["hint"] == "••••18e7" and st["medicine"] == 1 and st["non_medicine"] == 1 and st["with_atc"] == 1
+    assert [i["name"] for i in await p1.search_items("nuk")] == ["Nuk Soother"]
+    assert (await p1.search_items("1000005"))[0]["atc"] == "J01EA01"
+    phs = await p1.pharmacies()
+    assert [p["id"] for p in phs] == [CY], "μόνο κυπριακά φαρμακεία"
+
+
+async def test_cy_catalog_photos_suppliers_and_category_tree(mem):
+    from app.services import catalog_sync
+    from app.services.cy import pharmacyone as p1
+    raw = {"id": "n1", "barcodes": ["4008600411574"], "name": "Nuk Soother", "supergroup": "NON-MEDICINE",
+           "source": "mefal", "vat": 19.0, "retail_price": 9.95, "wh_price": 6.43,
+           "bus_category1": "Γονείς & Παιδί", "bus_category2": "Βρεφικά", "bus_category3": "Πιπίλες",
+           "extra": {"image_url": "https://image.cloudon.gr/cy_images/4008600411574.jpg"},
+           "mefal": {"code": "10023422", "wh_price": 6.43, "retail_price": 9.95, "stock": 0.0, "active": True},
+           "blue": {"code": "77", "wh_price": 6.1, "retail_price": 9.5, "stock": 3.0, "active": True}}
+    p = p1.to_product(raw)
+    assert p["photo_url"].endswith("4008600411574.jpg") and p["supplier"] == "Mefal"
+    assert {s["name"] for s in p["suppliers"]} == {"Mefal", "Blue"}
+    assert next(s for s in p["suppliers"] if s["name"] == "Blue")["stock"] == 3
+    assert p["cat_path"] == ["Γονείς & Παιδί", "Βρεφικά", "Πιπίλες"] and p["category"] == "Γονείς & Παιδί"
+    await mem["cy_catalog_items"].insert_one({"_id": "n1", "active": True, "raw": raw})
+    await mem["tenants"].update_one({"_id": CY}, {"$set": {"catalog_sync.types": ["parapharmacy"]}})
+    r = await catalog_sync.run_for_tenant(CY)
+    assert r["added"] == 1 and r["categories"]["assigned"] == 1
+    prod = await mem["pharmacy_products"].find_one({"tenant_id": CY, "barcode": "4008600411574"})
+    cats = {c["_id"]: c async for c in mem["pharmacy_categories"].find({"tenant_id": CY})}
+    from bson import ObjectId
+    names = [cats[ObjectId(prod[k])]["name"] for k in ("cat1_id", "cat2_id", "cat3_id")]
+    assert names == ["Γονείς & Παιδί", "Βρεφικά", "Πιπίλες"] and prod["supplier"] == "Mefal"
+    # ο φαρμακοποιός άλλαξε κατηγορία → η επόμενη ενημέρωση ΔΕΝ την πατά
+    await mem["pharmacy_products"].update_one({"_id": prod["_id"]}, {"$set": {"cat1_id": "mine"}})
+    await catalog_sync.run_for_tenant(CY, full=True)
+    assert (await mem["pharmacy_products"].find_one({"_id": prod["_id"]}))["cat1_id"] == "mine"
+    assert await catalog_sync.run_for_tenant(GR) != {}   # ελληνικό: άλλη πηγή, κανένα κυπριακό είδος
+    assert await mem["pharmacy_products"].count_documents({"tenant_id": GR, "barcode": "4008600411574"}) == 0
+
+
+async def test_catalog_sync_writes_only_differences(mem):
+    from app.services import catalog_sync
+    raw = {"id": "d1", "barcodes": ["5290000000035"], "name": "SOAP", "supergroup": "NON-MEDICINE",
+           "retail_price": 2.0, "vat": 19.0, "bus_category1": "Σώμα"}
+    await mem["cy_catalog_items"].insert_one({"_id": "d1", "active": True, "raw": raw})
+    await mem["tenants"].update_one({"_id": CY}, {"$set": {"catalog_sync.types": ["parapharmacy"]}})
+    assert (await catalog_sync.run_for_tenant(CY))["added"] == 1
+    again = await catalog_sync.run_for_tenant(CY, full=True)
+    assert again["updated"] == 0, "τίποτα δεν άλλαξε → καμία εγγραφή"
+    assert await mem["catalog_sync_events"].count_documents({"tenant_id": CY, "kind": {"$ne": "added"}}) == 0
+    # αλλάζει ΜΟΝΟ η φωτογραφία στην πηγή → γράφεται ΜΟΝΟ αυτό το είδος
+    raw2 = {**raw, "extra": {"image_url": "https://image.cloudon.gr/cy_images/5290000000035.jpg"}}
+    await mem["cy_catalog_items"].update_one({"_id": "d1"}, {"$set": {"raw": raw2}})
+    r = await catalog_sync.run_for_tenant(CY, full=True)
+    assert r["updated"] == 1
+    p = await mem["pharmacy_products"].find_one({"tenant_id": CY, "barcode": "5290000000035"})
+    assert p["photo_url"].endswith(".jpg")
+
+
+
+async def test_pharmacyone_sends_app_key_and_client_id_only_for_executions(mem, monkeypatch):
+    import httpx
+
+    from app.services.cy import pharmacyone as p1
+    from app.services.vault_service import vault
+    monkeypatch.setattr(vault, "tenant_pepper", lambda tid: "p")
+    await p1.set_api_key("APPKEY-12345-abcde")
+    p1.set_client_id(CY, "000000000000000000c1d001")
+    seen = {}
+
+    def handler(req: httpx.Request):
+        seen[req.url.path] = (req.headers.get("X-API-Key"), req.headers.get("X-Client-Id"))
+        key = "executions" if req.url.path.endswith("/executions") else "items"
+        return httpx.Response(200, json={key: [], "count": 0, "has_more": False, "next_cursor": None})
+    async with _p1_client(handler) as c:
+        await p1.sync_items(full=True, client=c)
+        await p1.sync_executions(CY, client=c)
+    assert seen["/external/v1/items"] == ("APPKEY-12345-abcde", None), "κατάλογος: μόνο κλειδί"
+    assert seen["/external/v1/executions"] == ("APPKEY-12345-abcde", "000000000000000000c1d001")
+
+    def h404(req):
+        return httpx.Response(404, json={"detail": "unknown client"})
+    async with _p1_client(h404) as c:
+        with pytest.raises(p1.PharmacyOneError) as e:
+            await p1.sync_executions(CY, client=c)
+    assert e.value.code == "unknown_client_id"
+
+
+def test_brand_is_always_text():
+    from app.services.cy.pharmacyone import brand_of, to_product
+    assert brand_of({"brand": {"brand_id": 7, "brand": "NUK"}}) == "NUK", "αντικείμενο → κείμενο (έριχνε την Αποθήκη)"
+    assert brand_of({"brand": "Vichy "}) == "Vichy" and brand_of({"brand": None}) is None and brand_of({}) is None
+    p = to_product({"id": "x", "barcodes": ["5290000000042"], "name": "X", "supergroup": "NON-MEDICINE",
+                    "brand": {"brand_id": 1, "brand": "A-DERMA"}})
+    assert p["brand"] == "A-DERMA"
+
+
+async def test_cy_atc_matching_uses_only_product_catalogues(mem):
+    from app.services.cy import atc_match
+    from app.services.cy.pharmacyone import product_from_doc
+    # ελληνικός ΔΗΜΟΣΙΟΣ κατάλογος (σκευάσματα)
+    await mem["medicine_catalog"].insert_many([
+        {"name": "DAONIL TAB 5MG", "substance_name": "GLIBENCLAMIDE", "atc": "A10BB01", "barcode": "2800000000011"},
+        {"name": "LIPITOR TAB 20MG", "substance_name": "ATORVASTATIN", "atc": "C10AA05", "barcode": "2800000000028"},
+        {"name": "AMBI A", "substance_name": "PARACETAMOL", "atc": "N02BE01"},
+        {"name": "AMBI B", "substance_name": "PARACETAMOL,CAFFEINE", "atc": "N02BE51"}])
+    gesy = {"_id": "g1", "active": True, "raw": {"id": "g1", "supergroup": "MEDICINE", "name": "PYRIDOSTIGMINE 60MG",
+            "gesy": {"ATC": "N07AA02-1"}, "moh": {"ingredient": "PYRIDOSTIGMINE"},
+            "atc_layers": {"atc_category1": "Νευρικό σύστημα", "atc_category2": "Παρασυμπαθομιμητικά"}}}
+    items = [
+        {"_id": "a", "raw": {"id": "a", "supergroup": "MEDICINE", "name": "MESTINON 60MG", "barcodes": ["5290000000101"],
+                            "moh": {"ingredient": "PYRIDOSTIGMINE"}}},                        # ίδια δραστική (CY)
+        {"_id": "b", "raw": {"id": "b", "supergroup": "MEDICINE", "name": "TORVA 20MG", "barcodes": ["5290000000102"],
+                            "moh": {"ingredient": "ATORVASTATIN"}}},                          # δραστική (GR)
+        {"_id": "c", "raw": {"id": "c", "supergroup": "MEDICINE", "name": "DAONIL TABLET 5MG", "barcodes": ["5290000000103"]}},  # μάρκα (GR)
+        {"_id": "d", "raw": {"id": "d", "supergroup": "MEDICINE", "name": "XYZQ TABLET", "barcodes": ["5290000000104"]}},  # τίποτα
+    ]
+    await mem["cy_catalog_items"].insert_many([gesy] + [{**x, "active": True} for x in items])
+    r = await atc_match.run(mem)
+    assert r["gesy"] == 1 and r["cy_substance"] == 1 and r["gr_substance"] == 1 and r["gr_brand"] == 1 and r["unmatched"] == 1
+    a = product_from_doc(await mem["cy_catalog_items"].find_one({"_id": "a"}))
+    assert a["atc"] == "N07AA02" and a["atc_source"] == "cy_substance"
+    assert a["cat_path"] == ["Νευρικό σύστημα", "Παρασυμπαθομιμητικά"], "ονομασία κατηγορίας της PharmacyOne"
+    b = product_from_doc(await mem["cy_catalog_items"].find_one({"_id": "b"}))
+    assert b["atc"] == "C10AA05" and b["atc_source"] == "gr_substance"
+    assert product_from_doc(await mem["cy_catalog_items"].find_one({"_id": "d"}))["atc"] is None, "καμία μαντεψιά"
+    assert (await atc_match.run(mem)).get("written", 0) == 0, "δεύτερο πέρασμα χωρίς αλλαγή → καμία εγγραφή"
+    # παρακετομόλη: δύο ATC για «PARACETAMOL»+συνδυασμό → η μονή ουσία έχει ΕΝΑΝ → ταυτίζεται· ο συνδυασμός ξεχωριστά
+    assert atc_match._one({"N02BE01"}) == "N02BE01" and atc_match._one({"A10BB01", "C10AA05"}) is None
+    assert atc_match._one({"C09AA", "C09AA05"}) == "C09AA"
+
+
+def test_atc_name_match_never_gives_one_substance_of_a_combination():
+    from app.services.cy import atc_match
+    idx = {"gr_bc": {}, "gr_brand": {}, "cy_sub": {}, "layers": {},
+           "gr_sub": {"AMLODIPINE+HYDROCHLOROTHIAZIDE+VALSARTAN": {"C09DX01"}},
+           "single": {"HYDROCHLOROTHIAZIDE": {"C03AA03"}, "VALSARTAN": {"C09CA03"}, "AMLODIPINE": {"C08CA01"}}}
+    combo = {"name": "AMLODIPINE/VALSARTAN/HYDROCHLOROTHIAZIDE ELPEN TABLET", "barcodes": []}
+    assert atc_match.match(combo, idx) == ("C09DX01", "name_substance"), "ο συνδυασμός, όχι το διουρητικό"
+    del idx["gr_sub"]["AMLODIPINE+HYDROCHLOROTHIAZIDE+VALSARTAN"]
+    assert atc_match.match(combo, idx) is None, "χωρίς γνωστό συνδυασμό → κανένας ATC (όχι λάθος)"
+    assert atc_match.norm_substance("NIVOLUMAB\nRELATLIMAB") == atc_match.norm_substance("RELATLIMAB | NIVOLUMAB")
+
+
+# ── Φάση 1: ATC στις εκτελέσεις · θεραπευτικό προφίλ · πρόγραμμα/συνέπεια · διατροφή ─────────────
+
+async def _phase1_seed(mem, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.cy import atc_link
+    from app.services.cy.importer import import_files
+    from app.services.vault_service import vault
+    monkeypatch.setattr(vault, "tenant_pepper", lambda tid: "p")
+    atc_link.reset()
+    await mem["cy_catalog_items"].insert_many([
+        {"_id": "jiv", "active": True, "raw": {"id": "jiv", "supergroup": "MEDICINE", "drug_code": "41M0186",
+         "name": "JIVOLAR", "barcodes": [], "gesy": {"ATC": "A10BD07-1"},
+         "atc_layers": {"atc_category1": "Πεπτική Οδός και Μεταβολισμός", "atc_category2": "Αντιδιαβητικά"}}},
+        {"_id": "clo", "active": True, "raw": {"id": "clo", "supergroup": "MEDICINE", "drug_code": "C555003",
+         "name": "CLOPIDOGREL", "barcodes": [], "gesy": {"ATC": "B01AC04-1"}}}])
+    now = datetime.now(timezone.utc)
+    ts = lambda d: (now - timedelta(days=d)).strftime("%Y-%m-%d %H:%M:%S +0000")  # noqa: E731
+    x1 = DRUG_XML.replace("2026-11-17 09:05:18 +0200", ts(30)).replace("<CurrentDispInstance>6<", "<CurrentDispInstance>1<")
+    x1 = x1.replace("<DispensingId>22222222", "<DispensingId>P1A")
+    x2 = DRUG_XML.replace("2026-11-17 09:05:18 +0200", ts(2)).replace("<CurrentDispInstance>6<", "<CurrentDispInstance>2<")
+    x2 = x2.replace("<DispensingId>22222222", "<DispensingId>P1B")
+    await import_files(CY, [("a.xml", x1.encode()), ("b.xml", x2.encode())], pepper="p")
+    return (await mem["cy_patients"].find_one({}))["pseudo_id"]
+
+
+async def test_atc_link_line_codes_with_pack_suffix(mem, monkeypatch):
+    from app.services.cy.atc_link import lookup
+    await _phase1_seed(mem, monkeypatch)
+    lk = await lookup()
+    assert lk.for_line({"code": "41M0186/5"})["atc"] == "A10BD07", "η κατάληξη συσκευασίας «/5» αγνοείται"
+    assert lk.for_line({"code": "ZZZ/1"}) is None
+
+
+async def test_cy_patient_360_therapy_groups_and_segments(mem, monkeypatch):
+    from app.repositories.cy_intelligence import CyPatientIntelligenceRepository
+    await _phase1_seed(mem, monkeypatch)
+    repo = CyPatientIntelligenceRepository(tenant_id=CY)
+    prof = await repo.patient_profile(amka="999001")
+    meds = {m["name"]: m for m in prof["medicines"]}
+    assert meds["JIVOLAR TABLET, FILM COATED 50MG/850MG"]["atc"] == "A10BD07"
+    assert {"diabetes", "cardio"} <= {s["key"] for s in prof["segments"]}
+    groups = {c["code"]: c for c in prof["conditions"]}
+    assert groups["A10B"]["title"] == "Αντιδιαβητικά" and prof["conditions_kind"] == "therapy_groups"
+    seg = {s["key"]: s["patients"] for s in (await repo.segments())["segments"]}
+    assert seg["diabetes"] == 1 and seg["cardio"] == 1 and seg["thyroid"] == 0
+
+
+async def test_cy_med_schedule_adherence_and_nutrition_via_shell(mem, monkeypatch):
+    from app.repositories.advisor import AdvisorRepository
+    from app.repositories.patient_portal import PatientAccountRepository, PatientRxRepository
+    ref = await _phase1_seed(mem, monkeypatch)
+    shell = await PatientAccountRepository().cy_shell(CY, ref, "ΑΝΔΡΕΑΣ ΣΥΝΘΕΤΙΚΟΥ")
+    rx = PatientRxRepository(tenant_id=CY)
+    sched = await rx.medication_schedule(str(shell))
+    jiv = next(t for t in sched["therapies"] if t["med_key"] == "cy:41M0186")
+    assert jiv["atc"] == "A10BD07"
+    adh = await rx.adherence(str(shell))
+    assert adh["meds"]["cy:41M0186"]["status"] == "rated" and adh["meds"]["cy:41M0186"]["fills"] == 2
+    assert adh["summary"] and adh["summary"]["rated"] >= 1
+    await mem["cy_patients"].update_one({"pseudo_id": ref}, {"$set": {"contact": {"email": "a@b.cy"}}})
+    plan = await AdvisorRepository(tenant_id=CY).nutrition_plan(str(shell))
+    titles = {s["title"] for s in plan["sections"]}
+    assert "Αντιδιαβητικά / Σακχαρώδης διαβήτης" in titles and plan["email"] == "a@b.cy"
+
+
+# ── Φάση 2: PharmaCat · αλληλεπιδράσεις · αναζήτηση φαρμάκων Κύπρου · AI συμβουλή ──────────────────
+
+def test_cy_substance_of_strips_strength_and_joins_combos():
+    from app.services.cy.atc_link import substance_of
+    assert substance_of({"moh": {"ingredient": "METFORMIN | SITAGLIPTIN"}}) == "METFORMIN + SITAGLIPTIN"
+    assert substance_of({"gesy": {"ActiveIngedientsStrength": "TRIMETHOPRIM 10mg/ml"}}) == "TRIMETHOPRIM"
+    assert substance_of({"gesy": {"ActiveIngedientsStrength": "HYDROCORTISONE 5.00 mg"}}) == "HYDROCORTISONE"
+    assert substance_of({}) is None
+
+
+async def test_cy_medicine_search_and_products_use_cyprus_catalogue_only(mem, monkeypatch):
+    from app.repositories.pharmacat import PharmaCatRepository
+    await _phase1_seed(mem, monkeypatch)
+    await mem["cy_catalog_items"].update_one({"_id": "clo"}, {"$set": {"raw.moh": {"ingredient": "CLOPIDOGREL"}}})
+    await mem["medicine_catalog"].insert_one({"_id": "gr1", "name": "PLAVIX", "substance_name": "CLOPIDOGREL",
+                                              "atc": "B01AC04"})
+    cy = PharmaCatRepository(tenant_id=CY)
+    hits = (await cy.medicine_search("clopi"))["items"]
+    assert [h["name"] for h in hits] == ["CLOPIDOGREL"] and hits[0]["atc"] == "B01AC04"
+    prods = await cy.products_for([{"name": "Clopidogrel", "atc": "B01AC04"}])
+    names = [p["name"] for g in prods for p in g["products"]]
+    assert names == ["CLOPIDOGREL"], "ΠΟΤΕ ελληνικά εμπορικά (PLAVIX) σε κυπριακό φαρμακείο"
+    info = await cy.medicine(prods[0]["products"][0]["eof"])
+    assert info["ok"] and info["substance"] == "CLOPIDOGREL" and info["atc"] == "B01AC04"
+    # το ελληνικό φαρμακείο ψάχνει ΜΟΝΟ στον ελληνικό κατάλογο
+    gr_hits = (await PharmaCatRepository(tenant_id=GR).medicine_search("clopi"))["items"]
+    assert "CLOPIDOGREL" not in [h["name"] for h in gr_hits]
+
+
+async def test_pharmacat_knowledge_is_shared_unless_country_specific(mem, monkeypatch):
+    """Οδηγία ιδιοκτήτη 18/11/2026: η κλινική βάση γνώσεων είναι ΚΟΙΝΗ (καμία πληροφορία ασθενή ή
+    φαρμακείου)· τα σκευάσματα βγαίνουν πάντα από τον κατάλογο της χώρας. Χωριστή απάντηση μόνο όταν η
+    αποθηκευμένη μιλά για φορείς της άλλης χώρας."""
+    from app.repositories.pharmacat import PharmaCatRepository
+    from app.services import ai_quota, pharmacat_service
+    seen: list = []
+    answer = {"reply": "Μέλι και ζεστά υγρά.", "substances": []}
+
+    async def fake_ask(messages, context, tenant_id=None, **_):
+        seen.append(dict(context or {}))
+        return {"ok": True, **answer}
+
+    async def ok(*a, **k):
+        return True, 0, 99, None
+    monkeypatch.setattr(pharmacat_service, "ask", fake_ask)
+    monkeypatch.setattr(ai_quota, "check_and_consume", ok)
+    msgs = [{"role": "user", "content": "Βήχας"}]
+    gr = await PharmaCatRepository(tenant_id=GR)._cached_ask("u", msgs, None, kind="chat")
+    cy = await PharmaCatRepository(tenant_id=CY)._cached_ask("u", msgs, None, kind="chat")
+    assert gr["source"] == "llm" and cy["source"] == "cache", "η Κύπρος παίρνει την ΚΟΙΝΗ απάντηση"
+    assert gr["sig"] == cy["sig"] and len(seen) == 1
+
+    # απάντηση με ελληνικό φορέα → η Κύπρος ΔΕΝ την παίρνει· νέα, κυπριακή, σε δική της θέση
+    msgs2 = [{"role": "user", "content": "Πυρετός"}]
+    answer["reply"] = "Δες το Δελτίο του ΕΟΦ."
+    await PharmaCatRepository(tenant_id=GR)._cached_ask("u", msgs2, None, kind="chat")
+    answer["reply"] = "Παρακεταμόλη."
+    cy2 = await PharmaCatRepository(tenant_id=CY)._cached_ask("u", msgs2, None, kind="chat")
+    assert cy2["source"] == "llm" and seen[-1].get("_country") == "CY"
+    gr_again = await PharmaCatRepository(tenant_id=GR)._cached_ask("u", msgs2, None, kind="chat")
+    assert gr_again["source"] == "cache" and "ΕΟΦ" in gr_again["reply"], "η ελληνική δεν πατήθηκε"
+    cy_again = await PharmaCatRepository(tenant_id=CY)._cached_ask("u", msgs2, None, kind="chat")
+    assert cy_again["source"] == "cache" and "ΕΟΦ" not in cy_again["reply"]
+
+
+def test_cy_prompts_speak_of_cyprus_not_greece():
+    from app.services import patient_advice, pharmacat_service
+    assert "Κύπρο" in patient_advice.SYSTEM_CY and "στην Ελλάδα" not in patient_advice.SYSTEM_CY
+    assert "ΚΥΠΡΟΥ" in pharmacat_service.CY_NOTE and "ΕΟΦ" in pharmacat_service.CY_NOTE   # «ΜΗΝ αναφέρεις ΕΟΦ»
+
+
+async def test_cy_interactions_use_active_regimen_substances(mem, monkeypatch):
+    from app.repositories.pharmacat import PharmaCatRepository
+    ref = await _phase1_seed(mem, monkeypatch)
+    await mem["cy_catalog_items"].update_one({"_id": "jiv"},
+                                             {"$set": {"raw.moh": {"ingredient": "VILDAGLIPTIN,METFORMIN"}}})
+    from app.services.cy import atc_link
+    atc_link.reset()
+    got: list = []
+
+    async def fake_ddi(self, user, drugs, ctx):
+        got.append(drugs)
+        return {"ok": True, "interactions": [{"a": "METFORMIN", "b": "IBUPROFEN"}]}
+    monkeypatch.setattr(PharmaCatRepository, "_ddi", fake_ddi)
+    res = await PharmaCatRepository(tenant_id=CY).interactions_for_patient("u", patient_id=ref,
+                                                                            added=["IBUPROFEN"])
+    assert got and "VILDAGLIPTIN + METFORMIN" in got[0] and "IBUPROFEN" in got[0]
+    assert res["interactions"][0]["involves_new"] is True
+
+
+async def test_cy_ai_advice_signature_is_per_pharmacy(mem, monkeypatch):
+    from app.repositories.cy_intelligence import CyPatientIntelligenceRepository
+    ref = await _phase1_seed(mem, monkeypatch)
+    pid, amka, sig = await CyPatientIntelligenceRepository(tenant_id=CY).advice_signature(patient_id=ref)
+    assert pid == ref and amka is None, "ΚΑΝΕΝΑ καθολικό κλειδί → η συμβουλή μένει στο φαρμακείο"
+    assert "A10B" in sig["conditions"] and sig["g6pd"] is False
+    assert await CyPatientIntelligenceRepository(tenant_id=CY).advice_signature(patient_id="nope") == (None, None, None)
+
+
+# ── Φάση 3: Marketing · θεραπευτικά κοινά · αυτοματισμοί ──────────────────────────────────────────
+
+async def _phase3_seed(mem, monkeypatch):
+    from app.services.cy import marketing as cy_marketing
+    cy_marketing.reset()
+    ref = await _phase1_seed(mem, monkeypatch)
+    await mem["cy_patients"].update_one({"pseudo_id": ref}, {"$set": {"contact": {
+        "mobile": "+35799123456", "email": "a@b.cy", "marketing_consent": True}}})
+    return ref
+
+
+async def test_cy_therapy_categories_from_gesy_dispensings(mem, monkeypatch):
+    from app.services.cy import marketing as cy_marketing
+    ref = await _phase3_seed(mem, monkeypatch)
+    br = await cy_marketing.therapy_breakdown(CY)
+    assert br["diabetes"]["patients"] == {ref} and br["cardio"]["patients"] == {ref}
+    assert br["diabetes"]["value"] > 0 and br["thyroid"]["patients"] == set()
+    sizes = {c["key"]: c for c in await cy_marketing.category_sizes(CY)}
+    assert sizes["diabetes"]["patients"] == 1 and sizes["diabetes"]["reachable"] == 1
+    assert await cy_marketing.therapy_breakdown(GR) == {k: {"patients": set(), "value": 0} for k in br}
+
+
+async def test_cy_therapy_segment_is_care_only_and_reaches_consented(mem, monkeypatch):
+    from app.services.cy import contacts as cy_contacts
+    ref = await _phase3_seed(mem, monkeypatch)
+    assert cy_contacts.clinical("therapy:diabetes") is True, "δεδομένα υγείας → μόνο φροντίδα"
+    a = await cy_contacts.audience(CY, "sms", "therapy:diabetes")
+    assert [r["patient_id"] for r in a["recipients"]] == ["cy:" + ref]
+    assert (await cy_contacts.audience(CY, "sms", "therapy:thyroid"))["recipients"] == []
+    with pytest.raises(ValueError):
+        await cy_contacts.segment_refs(CY, "therapy:nope")
+
+
+async def test_cy_marketing_dashboard_cards_open_cyprus_segments(mem, monkeypatch):
+    from app.services.cy import marketing as cy_marketing
+    await _phase3_seed(mem, monkeypatch)
+    d = await cy_marketing.dashboard(CY)
+    assert d["country"] == "CY" and {"performance", "categories", "suggestions", "campaigns", "totals"} <= set(d)
+    from app.services.cy.contacts import SEGMENTS
+    assert all(c["segment"] in SEGMENTS for c in d["suggestions"]), "κάθε κάρτα ανοίγει υπαρκτό κοινό Κύπρου"
+
+
+async def test_campaign_only_ids_never_widens_to_all(mem, monkeypatch):
+    """Αυτοματισμός = ένας άνθρωπος, ένα μήνυμα. Πριν (18/11/2026) η καμπάνια του αυτοματισμού
+    κλείδωνε ΟΛΟΥΣ με συγκατάθεση (segment «all»)."""
+    from app.services import campaign_engine, comms
+    ref = await _phase3_seed(mem, monkeypatch)
+    await mem["cy_patients"].insert_one({"tenant_id": CY, "pseudo_id": "other", "contact": {
+        "mobile": "+35799000000", "marketing_consent": True}})
+    res = await campaign_engine.create(CY, channel="sms", message="γεια", subject=None, segment="all",
+                                       value=None, by="t", only_ids={"cy:" + ref})
+    assert res["recipients"] == 1
+    seen = {}
+
+    async def fake_aud(tenant_id, channel, segment, value=None, only_ids=None):
+        seen["only"] = only_ids
+        return []
+    monkeypatch.setattr(comms, "campaign_audience", fake_aud)
+    await campaign_engine.create(GR, channel="sms", message="x", subject=None, segment="all", value=None,
+                                 by="t", only_ids={"p1"})
+    assert seen["only"] == {"p1"}, "και στην Ελλάδα περνά ο περιορισμός"
+
+
+async def test_cy_automations_triggers_and_candidates(mem, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.services import automations
+    from app.services.cy import marketing as cy_marketing
+    ref = await _phase3_seed(mem, monkeypatch)
+    bad = await automations.save(CY, {"trigger": "loyalty_points_over", "message": "x"})
+    assert bad == {"ok": False, "error": "bad_trigger"}, "trigger χωρίς δεδομένα Κύπρου → απορρίπτεται"
+    assert (await automations.save(CY, {"trigger": "inactive_days", "message": "x"}))["ok"]
+    now = datetime.now(timezone.utc)
+    await mem["cy_patients"].update_one({"pseudo_id": ref}, {"$set": {"last_seen": now - timedelta(days=90, hours=5)}})
+    assert await cy_marketing.automation_candidates(CY, "inactive_days", 90) == {"cy:" + ref}
+    assert await cy_marketing.automation_candidates(CY, "inactive_days", 30) == set(), "παράθυρο ΜΙΑΣ ημέρας"
+    assert await cy_marketing.automation_candidates(CY, "first_visit", 7) == set(), "2 επισκέψεις ≠ πρώτη"
+
+
+# ── Φάση 4α: Copilot & Ρουτίνες με δεδομένα ΓεΣΥ ──────────────────────────────────────────────────
+
+async def test_cy_copilot_reads_gesy_data_only(mem, monkeypatch):
+    from app.services import copilot_service as cs
+    await _phase1_seed(mem, monkeypatch)
+    k = await cs._read_tool("get_kpis", {"months_back": 2}, CY)
+    assert k["kpis"]["executions"] == 2 and k["kpis"]["patient_count"] == 1
+    top = await cs._read_tool("get_top", {"dim": "patients", "months_back": 2}, CY)
+    assert top["items"][0]["name"] and top["items"][0]["rx"] == 2
+    lst = await cs._read_tool("list_dispensings", {"months_back": 2}, CY)
+    assert lst["total"] == 2 and {"εκτέλεση", "ΟΑΥ_€", "φάση"} <= set(lst["items"][0])
+    op = await cs._read_tool("get_open_prescriptions", {}, CY)
+    assert "counts" in op
+    assert (await cs._read_tool("get_reimbursement", {}, CY)) == {"error": "unknown_tool"}, "ΕΟΠΥΥ ≠ Κύπρος"
+
+
+def test_cy_copilot_tools_and_actions_are_cyprus_only():
+    from app.services import copilot_service as cs
+    from app.services.cy import copilot as cyc
+    names = {t["name"] for t in cs._tools({"*"}, cy=True)}
+    assert {"list_dispensings", "get_lost_customers", "get_import_status"} <= names
+    assert not names & {"get_reimbursement", "get_reimbursement_risk", "list_prescriptions", "get_unexecuted"}
+    assert set(cyc.server_actions()) == {"sync_pharmacyone", "answer_availability", "mark_pickup_ready"}
+    for w in ("ΗΔΥΚΑ", "ΕΟΠΥΥ", "ICD"):
+        assert "ΜΗΝ τα αναφέρεις" in cyc.SYSTEM and w in cyc.SYSTEM.split("ΜΗΝ τα αναφέρεις")[0]
+    assert set(cyc.MESSAGE_SEGMENTS) == {"all", "recent", "inactive"}, "ρουτίνες: ΟΧΙ κλινικά κοινά"
+
+
+def test_cy_routine_lists_match_frontend():
+    import pathlib
+    import re
+    from app.services.cy import copilot as cyc
+    src = (pathlib.Path(__file__).resolve().parents[2] / "frontend" / "src" / "app" / "(app)" / "copilot"
+           / "routines" / "page.tsx").read_text(encoding="utf-8")
+    block = src.split("const CY_REPORT_TOOLS")[1].split("];")[0]
+    assert re.findall(r'\["(get_\w+|list_\w+)"', block) == list(cyc.REPORT_TOOLS)
+    seg = src.split("const CY_SEGMENTS")[1].split("];")[0]
+    assert re.findall(r'\["(\w+)"', seg) == list(cyc.MESSAGE_SEGMENTS)
+
+
+async def test_cy_routines_validate_against_cyprus_catalog(mem, monkeypatch):
+    from app.repositories.copilot_routines import CopilotRoutineRepository
+    await _phase1_seed(mem, monkeypatch)
+    repo = CopilotRoutineRepository(tenant_id=CY)
+    sched = {"kind": "daily", "time": "09:00"}
+    assert (await repo.create(user="u", name="r", schedule=sched, report_tool="get_lost_customers"))["ok"]
+    assert (await repo.create(user="u", name="r", schedule=sched, report_tool="get_reimbursement"))["error"] == "unknown_report_tool"
+    bad = await repo.create(user="u", name="m", schedule=sched, action="message", channel="sms",
+                            message="x", segment="therapy:diabetes")
+    assert bad["error"] == "bad_segment", "κλινικό κοινό ΔΕΝ μπαίνει σε ρουτίνα"
+    gr = CopilotRoutineRepository(tenant_id=GR)
+    assert (await gr.create(user="u", name="r", schedule=sched, report_tool="get_lost_customers"))["error"] == "unknown_report_tool"
+
+
+async def test_cy_copilot_action_plan_shape(mem, monkeypatch):
+    from app.services import copilot_service as cs
+    await _phase1_seed(mem, monkeypatch)
+    plan = await cs.build_action_plan(tenant_id=CY, perms={"*"})
+    assert set(plan) == {"cards", "generated_at", "count"}
+    assert all(c["action"]["kind"] == "navigate" for c in plan["cards"])
+
+
+async def test_pharmacat_kb_stats_and_scope(mem, monkeypatch):
+    from app.api.v1.routers.admin import _kb_scope, pharmacat_kb_stats
+    from app.repositories.pharmacat import PharmaCatRepository, _sig
+    from app.services import ai_quota, pharmacat_service
+
+    async def fake_ask(messages, context, tenant_id=None, **_):
+        return {"ok": True, "reply": "Ζεστά υγρά.", "substances": []}
+
+    async def ok(*a, **k):
+        return True, 0, 99, None
+    monkeypatch.setattr(pharmacat_service, "ask", fake_ask)
+    monkeypatch.setattr(ai_quota, "check_and_consume", ok)
+    msgs = [{"role": "user", "content": "Βήχας"}]
+    await PharmaCatRepository(tenant_id=GR)._cached_ask("u", msgs, None, kind="chat")
+    await PharmaCatRepository(tenant_id=CY)._cached_ask("u", msgs, None, kind="chat")
+    st = await pharmacat_kb_stats(days=30, _=None)
+    assert st["questions"]["total"] == 2 and st["questions"]["cache"] == 1 and st["questions"]["hit_rate"] == 50
+    assert st["questions"]["GR"] == 1 and st["questions"]["CY"] == 1
+    assert st["entries"]["total"] == 1 and st["entries"]["scope"]["shared"] == 1
+    assert st["top_period"][0]["n"] == 2 and st["top_period"][0]["query"] == "Βήχας"
+    old_cy = {"sig": _sig(msgs, {"_country": "CY"}), "query": "Βήχας"}       # εγγραφή πριν το `scope`
+    assert _kb_scope(old_cy) == "CY"
+
+
+async def test_copilot_keeps_answer_written_before_tool_call(mem, monkeypatch):
+    """18/11/2026: η λίστα γράφτηκε μαζί με το open_screen και το επόμενο βήμα έλεγε μόνο «Θέλεις
+    λεπτομέρειες;» — κρατούσαμε μόνο το τελευταίο κείμενο και η απάντηση χανόταν (ΚΑΙ στην Ελλάδα)."""
+    import types
+
+    import anthropic
+
+    from app.services import ai_cost, ai_quota, copilot_service as cs, pharmacat_service
+
+    def blk(**kw):
+        return types.SimpleNamespace(**kw)
+    turns = [
+        types.SimpleNamespace(stop_reason="tool_use", usage=None, content=[
+            blk(type="text", text="1. ΓΙΑΤΡΟΣ Α — 3.693,94 €"),
+            blk(type="tool_use", id="t1", name="open_screen", input={"href": "/cy/doctors", "label": "Γιατροί"})]),
+        types.SimpleNamespace(stop_reason="end_turn", usage=None, content=[
+            blk(type="text", text="Θέλεις λεπτομέρειες;")]),
+    ]
+
+    class FakeClient:
+        def __init__(self, **_):
+            self.messages = self
+
+        async def create(self, **_):
+            return turns.pop(0)
+
+    async def cfg():
+        return {"api_key": "k", "enabled": True, "model": "m"}
+
+    async def ok(*a, **k):
+        return True, 0, 99, None
+
+    async def nop(*a, **k):
+        return None
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeClient)
+    monkeypatch.setattr(pharmacat_service, "_config", cfg)
+    monkeypatch.setattr(ai_quota, "check_and_consume", ok)
+    monkeypatch.setattr(ai_cost, "record", nop)
+    r = await cs.ask(tenant_id=GR, perms={"*"}, messages=[{"role": "user", "content": "top γιατροί"}])
+    assert "ΓΙΑΤΡΟΣ Α" in r["reply"] and "Θέλεις λεπτομέρειες" in r["reply"]
+    assert r["actions"][0]["href"] == "/cy/doctors"
+
+
+# ── Φάση 4β: «Ο Σύμβουλός σου» με σήματα ΓεΣΥ ────────────────────────────────────────────────────
+
+async def test_cy_coach_signals_links_and_voice(mem, monkeypatch):
+    from app.repositories.cy_daily_coach import CyDailyCoachRepository, coach_for
+    from app.repositories.daily_coach import DailyCoachRepository
+    ref = await _phase1_seed(mem, monkeypatch)
+    assert type(await coach_for(GR)) is DailyCoachRepository
+    assert isinstance(await coach_for(CY), CyDailyCoachRepository)
+    # η τελευταία εκτέλεση άφησε ένα είδος που δεν δόθηκε
+    d = await mem["cy_dispensings"].find_one({"dispensing_id": "P1B"})
+    lines = d["lines"]
+    lines[0]["qty_disp"] = 0
+    lines[0]["qty_presc"] = lines[0].get("qty_presc") or 1
+    await mem["cy_dispensings"].update_one({"_id": d["_id"]}, {"$set": {"lines": lines}})
+    repo = CyDailyCoachRepository(tenant_id=CY)
+    today = await repo.build(user_name="Ανδρέας", persist=False)
+    sigs = {i["signal"]: i for i in today["items"]}
+    assert {"unexecuted", "no_contact"} <= set(sigs)
+    un = sigs["unexecuted"]
+    assert {"href": "/cy/dispensings/P1B", "kind": "rx", "label": "Η εκτέλεση"} in un["links"]
+    assert any(lk["href"] == f"/intelligence/profile?patient_id={ref}" for lk in un["links"])
+    assert "κλειδωμ" not in un["body"] and "ΗΔΥΚΑ" not in un["body"], "ΟΧΙ ελληνική νομοθεσία στην Κύπρο"
+    assert sigs["no_contact"]["links"][-1]["href"] == "/cy/patients"
+    cfg = await repo.settings()
+    assert "vaccine_missed" not in cfg["labels"] and "advance_due" in cfg["labels"]
+    assert set(cfg["signals"]) >= set(cfg["labels"]), "η αποθήκευση ρυθμίσεων δουλεύει"
+    await repo.save_settings({"signals": {**cfg["signals"], "no_contact": False}})
+    brief = await repo.patient_brief(ref)
+    assert brief["found"] and {n["kind"] for n in brief["notes"]} >= {"unexecuted", "no_contact"}
+    leak = await repo.leakage(6)
+    assert leak["profit_known"] is False and leak["total"]["items_n"] >= 1
+
+
+async def test_cy_coach_school_and_verify(mem, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from app.repositories.cy_daily_coach import CyDailyCoachRepository, school_for
+    ref = await _phase1_seed(mem, monkeypatch)
+    res = await (await school_for(CY)).build()
+    assert {"items", "total", "patients", "money_cents"} <= set(res)
+    assert all(c["id"] not in ("therapies", "vaccines") for c in res["items"])
+    repo = CyDailyCoachRepository(tenant_id=CY)
+    old = datetime.now(timezone.utc) - timedelta(days=40)
+    assert await repo._verify({"signal": "lapsed_chronic", "subject": ref, "first_seen_at": old}) == "recovered"
+    assert await repo._verify({"signal": "lapsed_chronic", "subject": ref,
+                               "first_seen_at": datetime.now(timezone.utc)}) == "lost"
+
+
+async def test_pharmacat_kb_sort_by_hits_ignores_closed_flags(mem):
+    from app.api.v1.routers.admin import pharmacat_kb_list
+    await mem["pharmacat_knowledge"].insert_many([
+        {"sig": "a", "query": "παλιά σήμανση", "hits": 0, "flag_open": False, "result": {}},
+        {"sig": "b", "query": "Βήχας", "hits": 63, "result": {}},
+        {"sig": "c", "query": "Πονόλαιμος", "hits": 7, "result": {}}])
+    r = await pharmacat_kb_list(q=None, flagged=False, page=1, page_size=10, sort="hits", _=None)
+    assert [i["hits"] for i in r["items"]] == [63, 7, 0]
+
+
+# ── Φάση 5: απαίτηση ΟΑΥ · σύγκριση προμηθευτών · «απεβίωσε» ─────────────────────────────────────
+
+async def test_cy_hio_claim_month_totals_without_patient_data(mem, monkeypatch):
+    from app.services.cy import insights
+    await _phase1_seed(mem, monkeypatch)
+    res = await insights.hio_claim(CY)
+    total_hio = sum(m["hio"] for m in res["months"])
+    assert sum(m["dispensings"] for m in res["months"]) == 2 and total_hio >= 0
+    assert res["months"][0]["month"] >= res["months"][-1]["month"], "νεότερος μήνας πρώτα"
+    for d in res["dispensings"]:
+        assert not {"patient_ref", "patient_name", "hio_code"} & set(d), "ΚΑΝΕΝΑ στοιχείο πελάτη"
+
+
+def test_cy_supplier_compare_cheapest_available_first():
+    from app.services.cy.insights import compare_suppliers
+    out = compare_suppliers([
+        {"name": "A", "wholesale_cents": 900, "stock": 0},
+        {"name": "B", "wholesale_cents": 1000, "stock": None},
+        {"name": "C", "wholesale_cents": 950, "stock": 5},
+        {"name": "D", "wholesale_cents": None, "stock": 9}])
+    assert [x["name"] for x in out] == ["C", "B", "A"], "διαθέσιμος φθηνότερος πρώτα· χωρίς τιμή εκτός"
+    assert out[-1]["available"] is False
+
+
+async def test_cy_reorder_matches_warehouse_by_gesy_code_and_compares(mem, monkeypatch):
+    from app.services.cy import insights
+    await _phase1_seed(mem, monkeypatch)
+    await mem["pharmacy_products"].insert_one({
+        "tenant_id": CY, "name": "JIVOLAR", "drug_code": "41M0186", "stock_qty": 0,
+        "suppliers": [{"name": "Mefal", "wholesale_cents": 2000, "stock": 3},
+                      {"name": "Blue", "wholesale_cents": 1800, "stock": None}]})
+    res = await insights.reorder(CY, horizon=60)
+    jiv = next((i for i in res["items"] if (i.get("code") or "").startswith("41M0186")), None)
+    assert jiv and jiv["suggested"] > 0, "το είδος βρέθηκε στην Αποθήκη με τον κωδικό ΓεΣΥ"
+    assert jiv["best_supplier"] == "Blue" and jiv["saving_cents"] == 200 * jiv["suggested"]
+    assert res["baskets"] and res["summary"]["with_suppliers"] >= 1
+
+
+async def test_cy_deceased_is_excluded_everywhere_but_the_card(mem, monkeypatch):
+    from app.services.cy import chains as ch
+    from app.services.cy import contacts as cy_contacts
+    from app.services.cy import marketing as cy_marketing
+    ref = await _phase3_seed(mem, monkeypatch)
+    assert (await cy_contacts.audience(CY, "sms", "all"))["recipients"]
+    await mem["cy_patients"].update_one({"pseudo_id": ref}, {"$set": {"deceased": {"at": "2026-11-18"}}})
+    cy_marketing.reset()
+    assert (await cy_contacts.audience(CY, "sms", "all"))["recipients"] == [], "ΠΟΤΕ μήνυμα σε θανόντα"
+    assert [c for c in await ch.chains(CY) if c["patient_ref"] == ref] == []
+    assert await ch.chains(CY, match={"patient_ref": ref}), "η καρτέλα του τον δείχνει κανονικά"
+    assert (await cy_marketing.therapy_breakdown(CY))["diabetes"]["patients"] == set()
+
+
+async def test_cy_repeat_therapy_programs_from_gesy(mem, monkeypatch):
+    from app.repositories.cy_programs import CyTherapyProgramRepository, programs_repo
+    from app.repositories.vaccine_programs import VaccineProgramRepository
+    ref = await _phase1_seed(mem, monkeypatch)
+    assert type(await programs_repo(GR)) is VaccineProgramRepository
+    repo = await programs_repo(CY)
+    assert isinstance(repo, CyTherapyProgramRepository)
+    prods = await repo.products(search="jivo")
+    assert prods and prods[0]["eof_code"] == "41M0186" and prods[0]["atc"] == "A10BD07"
+    prog = await repo.save({"name": "Jivolar", "eof_codes": ["41M0186"], "repeat_months": 1,
+                            "repeat_from": "last", "doses_required": 1})
+    res = await repo.patients_for(prog)
+    assert res["total"] == 1 and res["items"][0]["patient_id"] == ref and res["items"][0]["doses"] == 2
+    assert "amka" in res["items"][0] and await repo.list("therapy") and await repo.list("vaccine") == []
+    cov = await repo.coverage_for_patient(prog, ref)
+    assert cov and cov["doses"] == 2
+    await mem["cy_patients"].update_one({"pseudo_id": ref}, {"$set": {"deceased": {"at": "x"}}})
+    assert (await repo.patients_for(prog))["total"] == 0, "ΠΟΤΕ θανόντες"
+
+
+def test_program_routes_open_with_either_addon():
+    from app.api.v1.routers import vaccine_programs as vp
+    assert set(vp._MODULE) == {"vaccination_programs", "therapy_programs"}
+
+
+async def test_cy_families_and_care_on_gesy_data(mem, monkeypatch):
+    from app.repositories.cy_groups import CyCareAccountRepository, CyPatientGroupRepository, search_patients
+    from app.services.cy import group_lists as gl
+    ref = await _phase1_seed(mem, monkeypatch)
+    p = await mem["cy_patients"].find_one({"pseudo_id": ref})
+    hits = await search_patients(CY, (p.get("full_name") or "Α")[:3])
+    assert hits and hits[0]["patient_id"] == ref and "amka" in hits[0]
+    fam = CyPatientGroupRepository(tenant_id=CY)
+    g = await fam.create(kind="family", name="Οικογένεια Δοκιμή", by="u")
+    gid = str(g.get("_id") or g.get("id"))
+    assert (await fam.add_member(gid, patient_id=ref))["ok"]
+    assert (await fam.add_member(gid, patient_id=ref))["error"] == "already_member"
+    assert (await fam.add_member(gid, amka="000000"))["error"] == "no_patient", "όχι εγγραφή χωρίς εκτέλεση ΓεΣΥ"
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    d = await fam.detail(gid, date_from=now - timedelta(days=365), date_to=now + timedelta(days=1))
+    row = d["members"][0]
+    assert row["patient_id"] == ref and row["executions"] == 2 and not row["pending"]
+    assert await fam.groups_for_patient(ref) and (await fam.list_groups(q=(p.get("full_name") or "")[:4]))["total"] == 1
+    lists = await gl.everything(CY, [ref], {ref: "Χ"})
+    assert set(lists) == {"recent", "opening", "order", "pending", "loans"} and len(lists["recent"]) == 2
+    care = CyPatientGroupRepository(tenant_id=CY)
+    c = await care.create(kind="care", name="Γηροκομείο", by="u")
+    cid = str(c.get("_id") or c.get("id"))
+    await care.add_member(cid, patient_id=ref)
+    # το μέλος μπήκε «τώρα» → δεν χρεώνεται για τα παλιά· ορίζουμε ρητή αφετηρία χρεώσεων
+    await mem["patient_groups"].update_one({"_id": __import__("bson").ObjectId(cid)},
+                                          {"$set": {"charges_from": datetime(2000, 1, 1),
+                                                    "members.0.charges_from": datetime(2000, 1, 1)}})
+    acc = CyCareAccountRepository(tenant_id=CY)
+    total_ben = sum([(x.get("totals") or {}).get("beneficiary", 0) async for x in mem["cy_dispensings"].find({})])
+    assert await acc.balance(cid) == total_ben, "η δομή χρωστά ΜΟΝΟ τη συμμετοχή"
+    cyc = await acc.cycle(cid, days=60)
+    assert cyc["group"]["name"] == "Γηροκομείο" and "opening" in cyc
+    assert await gl.instructions(CY, [ref], {ref: "Χ"})
+
+
+async def test_campaign_coupon_is_linked_to_real_campaign_for_roi(mem, monkeypatch):
+    """Πριν (έως 18/11/2026) το κουπόνι έμενε με προσωρινό αριθμό καμπάνιας → ROI πάντα 0."""
+    from bson import ObjectId
+
+    from app.services import campaign_engine, marketing
+    ref = await _phase3_seed(mem, monkeypatch)
+    cp = await marketing.create_coupon(CY, campaign_id=str(ObjectId()), discount_type="pct", discount_value=10)
+    res = await campaign_engine.create(CY, channel="sms", message="Κωδικός {coupon}", subject=None, segment="all",
+                                       value=None, by="t", coupon_code=cp["code"])
+    assert (await mem["campaign_coupons"].find_one({"_id": cp["code"]}))["campaign_id"] == res["campaign_id"]
+    await marketing.redeem_coupon(CY, cp["code"], amount_cents=2000)
+    roi = {r["id"]: r for r in await marketing.campaigns_with_roi(CY)}
+    assert roi[res["campaign_id"]]["redemptions"] == 1 and roi[res["campaign_id"]]["coupon"] == cp["code"]
+    assert ref
+
+
+async def test_cy_warehouse_match_handles_leading_zero_and_pack_suffix(mem):
+    """18/11/2026: XML ΓεΣΥ «03582910071631» vs Αποθήκη «3582910071631»· κωδικός «2100081/1» —
+    το απλό barcode==barcode έκανε «άγνωστο» απόθεμα και κερδοφορία χωρίς κάλυψη."""
+    from app.services.cy import warehouse
+    await mem["pharmacy_products"].insert_many([
+        {"tenant_id": CY, "name": "Clexane 40", "barcode": "3582910071631",
+         "barcodes": ["2100081/1", "3582910071631", "03582910071631"], "drug_code": "2100081/1", "stock_qty": 4},
+        {"tenant_id": CY, "name": "Other", "barcode": "5290000000001", "drug_code": "77/1"}])
+    wh = await warehouse.lookup(CY, [{"barcode": "03582910071631"}, {"code": "2100081/2"}], fields=("stock_qty", "name"))
+    assert wh.get("03582910071631")["name"] == "Clexane 40"
+    assert wh.get(None, "2100081/2")["name"] == "Clexane 40", "μία μόνο συσκευασία στην Αποθήκη → αυτή"
+    assert wh.get("0000") is None
+    assert (await warehouse.lookup(GR, [{"barcode": "03582910071631"}])).get("03582910071631") is None, "ανά φαρμακείο"
+
+
+
+async def test_cy_warehouse_never_mixes_pack_sizes(mem):
+    """«3900185/1» = 10 δισκία, «3900185/7» = 100 — ΠΟΤΕ τιμή άλλης συσκευασίας (18/11/2026)."""
+    from app.services.cy import warehouse
+    await mem["pharmacy_products"].insert_many([
+        {"tenant_id": CY, "name": "Naxat 100", "barcode": "3900185/7", "drug_code": "3900185/7", "wholesale_cents": 9682},
+        {"tenant_id": CY, "name": "Naxat 10", "barcode": "5291171003623", "drug_code": "3900185/1", "wholesale_cents": 621},
+        {"tenant_id": CY, "name": "Naxat 30", "barcode": "5291171003647", "drug_code": "3900185/4", "wholesale_cents": 1749}])
+    wh = await warehouse.lookup(CY, [{"barcode": "05291171003623", "code": "3900185/1"}, {"code": "3900185/9"}],
+                                fields=("name", "wholesale_cents"))
+    assert wh.get("05291171003623", "3900185/1")["name"] == "Naxat 10"
+    assert wh.get(None, "3900185/9") is None, "άγνωστη συσκευασία με πολλές στην Αποθήκη → καμία εικασία"
+
+
+def test_cy_demo_masks_people_not_medicines():
+    """«Λειτουργία παρουσίασης» Κύπρου (20/11/2026): πρόσωπα κρυμμένα, φάρμακα/προσωπικό ορατά.
+    ΓεΣΥ = «ΟΝΟΜΑ ΕΠΙΘΕΤΟ» → κρύβεται το ΕΠΙΘΕΤΟ (τελευταίες λέξεις), όχι το μικρό όνομα."""
+    from app.services.cy.masking import mask_tree
+    from app.utils.masking import set_given_name_first
+    set_given_name_first(True)
+    try:
+        out = mask_tree({
+            "patient": {"ref": "p1", "full_name": "ΜΑΡΙΑ ΙΩΑΝΝΟΥ", "hio_code": "123456", "dob": "1950-01-01"},
+            "contact": {"mobile": "+35799000000", "email": "a@b.cy", "marketing_consent": True},
+            "items": [{"patient_ref": "p1", "patient_name": "ΜΑΡΙΑ ΙΩΑΝΝΟΥ", "doctor": "ΑΝΔΡΕΑΣ ΓΕΩΡΓΙΟΥ",
+                       "lines": [{"description": "NAXAT 100MG", "name": "NAXAT"}]}],
+            "doctor": {"id": "d1", "name": "ΑΝΔΡΕΑΣ ΓΕΩΡΓΙΟΥ", "phones": ["22000000"]},
+            "doctors": ["ΑΝΔΡΕΑΣ ΓΕΩΡΓΙΟΥ"],
+            "rows": [{"doctor_id": "d1", "name": "ΑΝΔΡΕΑΣ ΓΕΩΡΓΙΟΥ"}, {"patient_id": "p1", "name": "ΜΑΡΙΑ ΙΩΑΝΝΟΥ"},
+                     {"key": "x", "name": "CLEXANE 40"}],
+            "staff": [{"username": "u1", "name": "Υπάλληλος"}]})
+    finally:
+        set_given_name_first(False)
+    assert out["patient"]["full_name"] == "ΜΑΡΙΑ Ι****" and out["patient"]["hio_code"] == "****"
+    assert out["contact"] == {"mobile": "****", "email": "****", "marketing_consent": True}
+    it = out["items"][0]
+    assert it["patient_name"] == "ΜΑΡΙΑ Ι****" and it["doctor"] == "ΑΝΔΡΕΑΣ Γ****"
+    assert it["lines"][0]["name"] == "NAXAT", "όνομα φαρμάκου ΠΟΤΕ κρυμμένο"
+    assert out["doctor"]["name"] == "ΑΝΔΡΕΑΣ Γ****" and out["doctor"]["phones"] == ["****"]
+    assert out["doctors"] == ["ΑΝΔΡΕΑΣ Γ****"]
+    assert [r["name"] for r in out["rows"]] == ["ΑΝΔΡΕΑΣ Γ****", "ΜΑΡΙΑ Ι****", "CLEXANE 40"]
+    assert out["staff"][0]["name"] == "Υπάλληλος"
+
+
+def test_mask_name_order_greek_vs_cyprus():
+    """Ο κανόνας είναι ΠΑΝΤΑ «κρύψε το επίθετο»· αλλάζει μόνο η θέση του (ΗΔΥΚΑ πρώτο, ΓεΣΥ τελευταίο)."""
+    from app.utils.masking import mask_name, set_given_name_first
+    assert mask_name("ΠΑΠΑΔΟΠΟΥΛΟΥ ΜΑΡΙΑ", True) == "Π**** ΜΑΡΙΑ"
+    set_given_name_first(True)
+    try:
+        assert mask_name("MARIA ANNA IOANNOU", True) == "MARIA A**** I****"
+        assert mask_name("IOANNOU", True) == "I****"
+        assert mask_name("MARIA IOANNOU", False) == "MARIA IOANNOU"
+    finally:
+        set_given_name_first(False)
+    assert mask_name("ΠΑΠΑΔΟΠΟΥΛΟΥ ΜΑΡΙΑ", True) == "Π**** ΜΑΡΙΑ"
+
+
+def test_cy_router_masks_every_response_in_demo_only():
+    """Η απόκρυψη είναι ΣΤΟΝ ROUTER (route_class): ένα νέο endpoint δεν μπορεί να την ξεχάσει."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.v1.routers import cy as cy_router
+    from app.services.cy.masking import CyMaskedRoute
+    assert cy_router.router.route_class is CyMaskedRoute
+
+    from fastapi import APIRouter
+    r = APIRouter(route_class=CyMaskedRoute)
+
+    @r.get("/x")
+    async def x(request: Request, demo: bool = False):
+        request.state.cy_demo = demo
+        return {"full_name": "ΙΩΑΝΝΟΥ ΜΑΡΙΑ", "name": "NAXAT"}   # χωρίς σειρά ΓεΣΥ → ελληνική
+
+    app = FastAPI()
+    app.include_router(r)
+    c = TestClient(app)
+    assert c.get("/x").json()["full_name"] == "ΙΩΑΝΝΟΥ ΜΑΡΙΑ"
+    assert c.get("/x?demo=true").json() == {"full_name": "Ι**** ΜΑΡΙΑ", "name": "NAXAT"}
+
+
+def test_cy_demo_never_saves_masked_contact():
+    from app.services.cy.masking import has_mask
+    assert has_mask("****") and not has_mask("+35799000000") and not has_mask(None)

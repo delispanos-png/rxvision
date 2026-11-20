@@ -6,6 +6,7 @@ import { Users, Search, Settings2, Info, Send } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { Modal } from "@/components/ui/Modal";
 import { PriorityBadge } from "@/components/ui/PriorityBadge";
@@ -57,6 +58,7 @@ const FILTERS_BY_KIND: Record<"vaccine" | "therapy", [string, string, string][]>
  *  μηχανισμός είναι όντως ο ίδιος — αντιγραφή του θα σήμαινε δύο σημεία προς διόρθωση. */
 export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
   const t = useT();
+  const isCy = useCountry() === "CY";
   const [info, setInfo] = useState<Pat | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [status, setStatus] = useState("all");
@@ -119,7 +121,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
             {p.name}
           </button>
         ))}
-        <Link href="/vaccinations/settings"
+        <Link href={kind === "therapy" ? "#params" : "/vaccinations/settings"}
           className="ml-auto inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
           <Settings2 className="h-3.5 w-3.5" />{t("Παράμετροι", "Parameters")}
         </Link>
@@ -144,7 +146,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
         <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 dark:border-slate-700">
           <Search className="h-3.5 w-3.5 text-slate-400" />
           <input value={term} onChange={(e) => setTerm(e.target.value)}
-            placeholder={t("όνομα ή ΑΜΚΑ…", "name or ΑΜΚΑ…")}
+            placeholder={isCy ? t("όνομα ή κωδικός ΟΑΥ…", "name or HIO code…") : t("όνομα ή ΑΜΚΑ…", "name or ΑΜΚΑ…")}
             className="w-44 bg-transparent py-1.5 text-sm outline-none" />
         </span>
       </div>
@@ -166,7 +168,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400"><tr>
                 <th className="px-4 py-2.5 text-left">{t("Ασφαλισμένος", "Patient")}</th>
-                <th className="px-4 py-2.5 text-left">ΑΜΚΑ</th>
+                <th className="px-4 py-2.5 text-left">{isCy ? t("Κωδ. ΟΑΥ", "HIO code") : "ΑΜΚΑ"}</th>
                 <th className="px-4 py-2.5 text-left">{t("Ηλικία", "Age")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Σκεύασμα", "Product")}</th>
                 <th className="px-4 py-2.5 text-left">{t("Τελευταία δόση", "Last dose")}</th>
@@ -245,6 +247,7 @@ export function ProgramPatients({ kind }: { kind: "vaccine" | "therapy" }) {
 /** «Πότε έκανα τους εμβολιασμούς μου;» — η απάντηση, έτοιμη για τον πάγκο. */
 function DoseHistory({ pat, onClose }: { pat: Pat; onClose: () => void }) {
   const t = useT();
+  const isCy = useCountry() === "CY";
   const done = pat.doses >= pat.doses_required;
   return (
     <Modal open onClose={onClose} title={pat.name} size="md">
@@ -278,7 +281,10 @@ function DoseHistory({ pat, onClose }: { pat: Pat; onClose: () => void }) {
         </div>
 
         <p className="text-xs text-slate-400">
-          {t("Εμφανίζονται μόνο οι δόσεις που χορηγήθηκαν από ΤΟ ΔΙΚΟ ΣΟΥ φαρμακείο. Δόσεις που έγιναν αλλού δεν είναι γνωστές — η ΗΔΥΚΑ δεν τις διαθέτει.",
+          {isCy
+            ? t("Εμφανίζονται οι δόσεις που δόθηκαν από ΤΟ ΔΙΚΟ ΣΟΥ φαρμακείο (εκτελέσεις ΓεΣΥ). Όσες έγιναν αλλού, κατέγραψέ τες με «δόση αλλού».",
+                "Doses dispensed by YOUR pharmacy (GHS dispensings) are shown. Record those given elsewhere with «dose elsewhere».")
+            : t("Εμφανίζονται μόνο οι δόσεις που χορηγήθηκαν από ΤΟ ΔΙΚΟ ΣΟΥ φαρμακείο. Δόσεις που έγιναν αλλού δεν είναι γνωστές — η ΗΔΥΚΑ δεν τις διαθέτει.",
              "Only doses dispensed by YOUR pharmacy are shown. Doses given elsewhere are not available from ΗΔΥΚΑ.")}
         </p>
       </div>

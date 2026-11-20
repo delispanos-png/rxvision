@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Play, Trash2, Plus, Inbox, Sparkles, Loader2, Mail, Bell, Send, MessageSquare, Check, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { QueryState } from "@/components/ui/QueryState";
 import { appConfirm } from "@/store/dialogStore";
 import Link from "next/link";
@@ -36,6 +37,23 @@ const REPORT_TOOLS: [string, string, string][] = [
   ["get_vip", "VIP ασθενείς", "VIP patients"],
   ["get_order_suggestions", "Προτάσεις παραγγελίας", "Order suggestions"],
   ["get_upcoming", "Μελλοντικές συνταγές", "Upcoming prescriptions"],
+  ["get_portal_pending", "Εκκρεμή αιτήματα πελατών", "Pending customer requests"],
+];
+// Κύπρος: ίδια λίστα με services/cy/copilot.py REPORT_TOOLS (ελέγχεται από tests/test_cy.py)
+const CY_REPORT_TOOLS: [string, string, string][] = [
+  ["get_kpis", "Σύνοψη φαρμακείου (KPIs)", "Pharmacy summary (KPIs)"],
+  ["get_top", "Κορυφαία λίστα (γιατροί/σκευάσματα/πελάτες)", "Top list (doctors/products/customers)"],
+  ["list_dispensings", "Λίστα εκτελέσεων", "Dispensings list"],
+  ["get_open_prescriptions", "Ανοιχτές συνταγές (φάσεις)", "Open prescriptions (steps)"],
+  ["get_lost_customers", "Χαμένοι πελάτες", "Lost customers"],
+  ["get_not_dispensed", "Είδη που δεν δόθηκαν", "Items not dispensed"],
+  ["get_pc2", "Διαφορά τιμής PC2", "Price difference (PC2)"],
+  ["get_profitability", "Κερδοφορία", "Profitability"],
+  ["get_order_suggestions", "Πρόταση παραγγελίας", "Reorder suggestion"],
+  ["get_today_tasks", "Εργασίες ημέρας (πελάτες)", "Today's tasks (customers)"],
+  ["get_winback", "Πελάτες για επαναφορά", "Customers to win back"],
+  ["get_at_risk", "Πελάτες σε ρίσκο", "At-risk customers"],
+  ["get_vip", "VIP πελάτες", "VIP customers"],
   ["get_portal_pending", "Εκκρεμή αιτήματα πελατών", "Pending customer requests"],
 ];
 const DAYS: [string, string][] = [
@@ -180,7 +198,17 @@ const SEGMENTS: [string, string, string, string | null, string | null][] = [
   ["substance", "Με δραστική/ATC", "With substance/ATC", "ATC ή δραστική", "ATC or substance"],
 ];
 
+// Κύπρος: μόνο ΜΗ κλινικά κοινά (τα κλινικά → Marketing → Καμπάνιες, με μήνυμα φροντίδας)
+const CY_SEGMENTS: [string, string, string, string | null, string | null][] = [
+  ["all", "Όλοι οι πελάτες (με συγκατάθεση)", "All customers (consented)", null, null],
+  ["recent", "Ήρθαν τις τελευταίες 90 ημέρες", "Visited in the last 90 days", null, null],
+  ["inactive", "Δεν έχουν έρθει 90+ ημέρες", "No visit for 90+ days", null, null],
+];
+
 function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel: () => void; t: (a: string, b: string) => string }) {
+  const isCy = useCountry() === "CY";
+  const REPORTS = isCy ? CY_REPORT_TOOLS : REPORT_TOOLS;
+  const SEGS = isCy ? CY_SEGMENTS : SEGMENTS;
   const [rtype, setRtype] = useState<"report" | "message">("report");
   const [name, setName] = useState("");
   // report
@@ -206,7 +234,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
   const [err, setErr] = useState<string | null>(null);
 
   const isTop = tool === "get_top";
-  const segMatch = SEGMENTS.find(([v]) => v === segment);
+  const segMatch = SEGS.find(([v]) => v === segment);
   const segNeedsValue = segMatch && segMatch[3] ? t(segMatch[3], segMatch[4] || "") : null;
   const save = async () => {
     setBusy(true); setErr(null);
@@ -221,7 +249,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
       } else {
         const report_args: Record<string, unknown> = {};
         if (isTop) { report_args.dim = dim; report_args.days_back = Number(daysBack); }
-        const rt = REPORT_TOOLS.find(([v]) => v === tool);
+        const rt = REPORTS.find(([v]) => v === tool);
         body = { action: "report", name: name || (rt ? t(rt[1], rt[2]) : ""), schedule, report_tool: tool, report_args, delivery, email: delivery === "email" ? email : null };
       }
       const r = await api<{ ok: boolean }>("/copilot/routines", { method: "POST", body: JSON.stringify(body) });
@@ -250,7 +278,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
           <>
             <label className="block text-xs font-medium text-slate-500">{t("Αναφορά", "Report")}
               <select value={tool} onChange={(e) => setTool(e.target.value)} className={`mt-1 block w-full ${field}`}>
-                {REPORT_TOOLS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}
+                {REPORTS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}
               </select>
             </label>
             {isTop && (
@@ -259,7 +287,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
                   <option value="patients">{t("Πελάτες", "Customers")}</option>
                   <option value="doctors">{t("Ιατροί", "Doctors")}</option>
                   <option value="products">{t("Προϊόντα", "Products")}</option>
-                  <option value="icd10">ICD-10</option>
+                  {!isCy && <option value="icd10">ICD-10</option>}
                 </select>
               </label>
             )}
@@ -294,7 +322,7 @@ function NewRoutineForm({ onDone, onCancel, t }: { onDone: () => void; onCancel:
             </label>
             <label className="block text-xs font-medium text-slate-500">{t("Παραλήπτες", "Recipients")}
               <select value={segment} onChange={(e) => setSegment(e.target.value)} className={`mt-1 block w-full ${field}`}>
-                {SEGMENTS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}
+                {SEGS.map(([v, el, en]) => <option key={v} value={v}>{t(el, en)}</option>)}
               </select>
             </label>
             {segNeedsValue && (

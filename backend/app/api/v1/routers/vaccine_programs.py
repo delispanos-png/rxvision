@@ -14,11 +14,41 @@ from datetime import datetime, timezone
 from app.core.db import shared_db
 from app.core.deps import TenantContext, require
 from app.repositories.patient_portal import PatientAccountRepository
-from app.repositories.vaccine_programs import VaccineProgramRepository
 from app.services import comms, consent, push_service
 
 router = APIRouter()
-_MODULE = "vaccination_programs"        # paid add-on, 10 €/month — separate from the flu circuit
+
+
+async def _repo(ctx: TenantContext):
+    """Κύπρος: ίδιες οθόνες, κατάλογος Κύπρου + εκτελέσεις ΓεΣΥ (repositories/cy_programs.py)."""
+    from app.repositories.cy_programs import programs_repo
+    return await programs_repo(ctx.tenant_id, ctx.demo)
+
+
+async def _notify_cy(ctx: TenantContext, body, program: dict, data: dict) -> dict:
+    """Κύπρος: ΙΔΙΑ ουρά/χρέωση/ιδιοπάθεια/συγκατάθεση με τις Καμπάνιες Κύπρου (campaign_engine +
+    cy_contacts). Είναι δεδομένα υγείας (ποιος παίρνει ποια θεραπεία) → ΠΑΝΤΑ μήνυμα φροντίδας."""
+    from app.services import campaign_engine
+    from app.services.cy import contacts as cy_contacts
+    only = {f"cy:{r['patient_id']}" for r in data["items"]}
+    if not only:
+        return {"recipients": 0, "channel": body.channel, "dry_run": body.dry_run}
+    if body.dry_run:
+        aud = await cy_contacts.audience(ctx.tenant_id, body.channel, "all", only=only)
+        return {"recipients": len(aud["recipients"]), "channel": body.channel, "dry_run": True}
+    res = await campaign_engine.create(
+        ctx.tenant_id, channel=body.channel, message=body.message,
+        subject=body.subject or f"Υπενθύμιση: {program.get('name')}", segment="all", value=None,
+        purpose="care", by=getattr(ctx, "email", None) or ctx.user_id, source="therapy_program",
+        audience_name=program.get("name"), only_ids=only)
+    if res["recipients"]:
+        from app.workers.comms import dispatch_campaign
+        dispatch_campaign.delay(res["campaign_id"])
+    return {"recipients": res["recipients"], "sent": res["recipients"], "failed": 0, "queued": True}
+# ΔΥΟ πληρωμένα κυκλώματα στον ΙΔΙΟ μηχανισμό: «Περιοδικά εμβόλια» και «Θεραπείες με Επανάληψη».
+# Αρκεί ΕΝΑ για να ανοίξει η διαδρομή· το ΣΩΣΤΟ για κάθε πρόγραμμα το ελέγχει το `_guard_module`.
+# Πριν (έως 18/11/2026): μόνο τα εμβόλια → όποιος αγόραζε μόνο τις θεραπείες έπαιρνε 403 παντού.
+_MODULE = ["vaccination_programs", "therapy_programs"]
 _PERM = "prescriptions:read"
 
 
@@ -35,12 +65,18 @@ def _is_therapy(body: "ProgramIn") -> bool:
 
 
 def _guard_module(ctx: TenantContext, body: "ProgramIn") -> None:
-    """Θεραπεία χωρίς το αντίστοιχο add-on δεν αποθηκεύεται — ούτε «κρύβεται» απλώς."""
+    """Θεραπεία χωρίς το αντίστοιχο add-on δεν αποθηκεύεται — ούτε «κρύβεται» απλώς. Το ίδιο και
+    το εμβόλιο: η διαδρομή ανοίγει με οποιοδήποτε από τα δύο, η αποθήκευση θέλει το ΣΩΣΤΟ."""
     if _is_therapy(body) and ctx.modules.get("therapy_programs") not in ("enabled", "trial"):
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED,
                             detail={"error": "therapy_programs_required",
                                     "message": "Οι θεραπείες με επανάληψη είναι "
                                                "ξεχωριστή δυνατότητα."})
+    if (body.atc_prefixes and not _is_therapy(body)
+            and ctx.modules.get("vaccination_programs") not in ("enabled", "trial")):
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED,
+                            detail={"error": "vaccination_programs_required",
+                                    "message": "Τα περιοδικά εμβόλια είναι ξεχωριστή δυνατότητα."})
 
 
 class ProgramIn(BaseModel):
@@ -67,7 +103,7 @@ class ProgramIn(BaseModel):
 @router.get("/catalog/groups")
 async def catalog_groups(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Vaccine ATC groups (J07*) with product counts — one-click selection."""
-    return {"items": await VaccineProgramRepository.atc_groups()}
+    return {"items": await (await _repo(ctx)).atc_groups()}
 
 
 @router.get("/catalog/products")
@@ -77,7 +113,7 @@ async def catalog_products(
     ctx: TenantContext = Depends(require(_PERM, module=_MODULE)),
 ):
     """Individual vaccine products, for finer control than a whole ATC group."""
-    return {"items": await VaccineProgramRepository.products(atc, q)}
+    return {"items": await (await _repo(ctx)).products(atc, q)}
 
 
 # ── programmes CRUD ──────────────────────────────────────────────────────────────────────────
@@ -85,7 +121,7 @@ async def catalog_products(
 async def list_programs(kind: str | None = Query(None, description="vaccine | therapy"),
                         ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """`kind` χωρίζει τα δύο κυκλώματα: το ένα δεν βλέπει ποτέ τα προγράμματα του άλλου."""
-    return {"items": await VaccineProgramRepository(tenant_id=ctx.tenant_id).list(kind=kind)}
+    return {"items": await (await _repo(ctx)).list(kind=kind)}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -93,7 +129,7 @@ async def create_program(body: ProgramIn,
                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     try:
         _guard_module(ctx, body)
-        return await VaccineProgramRepository(tenant_id=ctx.tenant_id).save(body.model_dump())
+        return await (await _repo(ctx)).save(body.model_dump())
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, _msg(str(e))) from e
 
@@ -101,7 +137,7 @@ async def create_program(body: ProgramIn,
 @router.put("/{program_id}")
 async def update_program(program_id: str, body: ProgramIn,
                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    repo = VaccineProgramRepository(tenant_id=ctx.tenant_id)
+    repo = await _repo(ctx)
     if not await repo.get(program_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
     try:
@@ -114,7 +150,7 @@ async def update_program(program_id: str, body: ProgramIn,
 @router.delete("/{program_id}")
 async def delete_program(program_id: str,
                          ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    n = await VaccineProgramRepository(tenant_id=ctx.tenant_id).delete(program_id)
+    n = await (await _repo(ctx)).delete(program_id)
     if not n:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
     return {"deleted": n}
@@ -132,7 +168,7 @@ async def program_patients(
 ):
     """Οι ασφαλισμένοι που ανήκουν στο πρόγραμμα, με κατάσταση κάλυψης.
     Πηγή: οι εκτελεσμένες συνταγές που ήδη έχουμε — καμία κλήση ΗΔΥΚΑ."""
-    repo = VaccineProgramRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
+    repo = await _repo(ctx)
     program = await repo.get(program_id)
     if not program:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
@@ -156,7 +192,7 @@ async def add_manual_dose(program_id: str, patient_id: str, body: ManualDoseIn,
     Χωρίς αυτό ο ασθενής έμενε «εκπρόθεσμος» για πάντα και δεχόταν κλήσεις άδικα. ΔΕΝ γίνεται
     εκτέλεση συνταγής: δεν αγγίζει τζίρο ούτε αποζημίωση — μόνο την κάλυψή του.
     """
-    repo = VaccineProgramRepository(tenant_id=ctx.tenant_id)
+    repo = await _repo(ctx)
     if not await repo.get(program_id):
         raise HTTPException(404, "program_not_found")
     return await repo.add_manual_dose(program_id=program_id, patient_id=patient_id,
@@ -168,7 +204,7 @@ async def remove_manual_dose(program_id: str, dose_id: str,
                              ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Αναίρεση λάθος καταχώρησης. Σβήνει ΜΟΝΟ χειροκίνητες — οι πραγματικές εκτελέσεις δεν
     αγγίζονται από εδώ."""
-    n = await VaccineProgramRepository(tenant_id=ctx.tenant_id).remove_manual_dose(dose_id)
+    n = await (await _repo(ctx)).remove_manual_dose(dose_id)
     if not n:
         raise HTTPException(404, "dose_not_found")
     return {"deleted": n}
@@ -193,12 +229,15 @@ async def notify_program(program_id: str, body: NotifyIn,
     if body.status not in ("incomplete", "expired", "due_soon"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             "Η ειδοποίηση αφορά μόνο όσους εκκρεμούν, όχι τους πλήρως εμβολιασμένους.")
-    repo = VaccineProgramRepository(tenant_id=ctx.tenant_id)
+    repo = await _repo(ctx)
     program = await repo.get(program_id)
     if not program:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Το πρόγραμμα δεν βρέθηκε.")
 
     data = await repo.patients_for(program, status=body.status, limit=5000)
+    from app.repositories.cy_programs import CyTherapyProgramRepository
+    if isinstance(repo, CyTherapyProgramRepository):
+        return await _notify_cy(ctx, body, program, data)
     field = {"sms": "mobile", "viber": "mobile", "email": "email"}.get(body.channel)
 
     targets: list[dict] = []

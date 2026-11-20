@@ -22,6 +22,7 @@ type Dash = {
   suggestions: Card[];
   campaigns: Campaign[];
   totals: { upcoming: number; winback: number; at_risk: number; push_reach: number };
+  country?: string;
 };
 
 const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`;
@@ -31,7 +32,10 @@ export default function MarketingDashboard() {
   const t = useT();
   const router = useRouter();
   const q = useQuery({ queryKey: ["marketing-dash"], queryFn: () => api<Dash>("/marketing/dashboard"), refetchInterval: 300_000 });
-  const go = (segment: string, value: string | null) => router.push(`/communications?segment=${segment}${value ? `&value=${encodeURIComponent(value)}` : ""}`);
+  // Κύπρος: τα κλειδιά κοινού έρχονται έτοιμα (soon / inactive / therapy:<κατηγορία>) → Καμπάνιες Κύπρου
+  const go = (segment: string, value: string | null) => router.push(q.data?.country === "CY"
+    ? `/cy/campaigns?segment=${encodeURIComponent(segment)}`
+    : `/communications?segment=${segment}${value ? `&value=${encodeURIComponent(value)}` : ""}`);
   // εξαργύρωση κουπονιού στο ταμείο
   const [rc, setRc] = useState("");
   const [ramt, setRamt] = useState("");
@@ -146,9 +150,9 @@ export default function MarketingDashboard() {
 
                 {/* γρήγορες αφορμές */}
                 <section className="grid gap-2.5 sm:grid-cols-3">
-                  <Quick icon={<Clock className="h-4 w-4" />} label={t("Επερχόμενες επαναλήψεις", "Upcoming refills")} n={d.totals.upcoming} onClick={() => go("upcoming", "30")} />
-                  <Quick icon={<RefreshCw className="h-4 w-4" />} label={t("Ανενεργοί (win-back)", "Inactive (win-back)")} n={d.totals.winback} onClick={() => go("inactive", "180")} />
-                  <Quick icon={<Smartphone className="h-4 w-4" />} label={t("Δωρεάν κανάλι push", "Free push channel")} n={d.totals.push_reach} onClick={() => router.push("/communications")} />
+                  <Quick icon={<Clock className="h-4 w-4" />} label={d.country === "CY" ? t("Επόμενη φάση σε 7 ημέρες", "Next step within 7 days") : t("Επερχόμενες επαναλήψεις", "Upcoming refills")} n={d.totals.upcoming} onClick={() => go(d.country === "CY" ? "soon" : "upcoming", "30")} />
+                  <Quick icon={<RefreshCw className="h-4 w-4" />} label={d.country === "CY" ? t("Ανενεργοί 90+ ημέρες", "Inactive 90+ days") : t("Ανενεργοί (win-back)", "Inactive (win-back)")} n={d.totals.winback} onClick={() => go("inactive", "180")} />
+                  <Quick icon={<Smartphone className="h-4 w-4" />} label={t("Δωρεάν κανάλι push", "Free push channel")} n={d.totals.push_reach} onClick={() => router.push(d.country === "CY" ? "/cy/campaigns?channel=push" : "/communications")} />
                 </section>
               </>
             );

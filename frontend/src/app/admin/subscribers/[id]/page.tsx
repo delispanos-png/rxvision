@@ -10,6 +10,7 @@ import { adminApi, ApiError } from "@/lib/adminClient";
 import { fmtEur, fmtNum, fmtDate, fmtDateTime } from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { DataTable, type Column } from "@/components/tables/DataTable";
+import { PharmacyOneBox } from "@/components/admin/PharmacyOneBox";
 
 type User = { external_user_id: string; email: string; first_name: string; last_name: string; role: string; is_active: boolean; last_login_at: string | null };
 type BillingInfo = { name?: string; afm?: string; doy?: string; address?: string; city?: string; postal_code?: string; email?: string; billing_email?: string; phone?: string };
@@ -422,6 +423,7 @@ export default function TenantCardPage() {
               </div>
             )}
           </div>
+          {t.country === "CY" ? <PharmacyOneBox tenantId={id} /> : (
           <div className="rounded-lg border border-slate-200 p-3 text-sm">
             <div className="mb-1 font-medium text-slate-700">Διασύνδεση ΗΔΥΚΑ</div>
             {creds.data?.hdika?.configured ? (
@@ -445,6 +447,7 @@ export default function TenantCardPage() {
               </div>
             )}
           </div>
+          )}
         </div>
       </div>
 

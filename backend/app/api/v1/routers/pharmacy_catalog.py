@@ -776,9 +776,21 @@ async def catalog_sync_settings(
     """Με ποια από τα τρία ενημερώνεται το φαρμακείο, και τι έγινε την τελευταία φορά."""
     from app.services import catalog_sync
     from app.services.catalog_taxonomy import TAXONOMY
+    from app.services.cy.gate import tenant_country
     cfg = await catalog_sync.get_settings(ctx.tenant_id)
-    return {**cfg, "available": [{"key": c["type"], "label": c["label"]}
-                                 for c in TAXONOMY["classes"]]}
+    # Κύπρος: η PharmacyOne χωρίζει φάρμακα / παραφάρμακα (όχι ΜΗΣΥΦΑ) → δύο επιλογές
+    cy = await tenant_country(ctx.tenant_id) == "CY"
+    if not cy:
+        return {**cfg, "country": "GR", "available": [{"key": c["type"], "label": c["label"]}
+                                                      for c in TAXONOMY["classes"]]}
+    from app.core.db import shared_db
+    db = shared_db()
+    st = (await db["platform_settings"].find_one({"_id": "cy"}, {"items_sync": 1}) or {}).get("items_sync") or {}
+    return {**cfg, "country": "CY",
+            "available": [{"key": "rx_medicine", "label": "Φάρμακα"}, {"key": "parapharmacy", "label": "Παραφάρμακα"}],
+            "source": {"name": "PharmacyOne",
+                       "items": await db["cy_catalog_items"].count_documents({"active": True}),
+                       "updated_at": st.get("last_started_at")}}
 
 
 @router.put("/sync-settings")

@@ -95,7 +95,20 @@ async def chains(tenant_id: str, *, today: date | None = None,
             "status": classify(instance=instance, instances=instances, due=due, today=today,
                                lost_after=rules["lost_after_days"], soon=rules["soon_days"]),
         })
+    if not (match and "patient_ref" in match):
+        # Πελάτης που ο φαρμακοποιός σημείωσε «απεβίωσε»: έξω από ανοιχτές/χαμένους/παραγγελία/μηνύματα/
+        # Σύμβουλο — ΕΝΑ σημείο, αφού όλα αυτά πατούν εδώ. Η δική του καρτέλα (match patient_ref) τον δείχνει.
+        dead = await deceased_refs(tenant_id)
+        if dead:
+            out = [c for c in out if c["patient_ref"] not in dead]
     return out
+
+
+async def deceased_refs(tenant_id: str) -> set[str]:
+    """Ψευδώνυμα πελατών που ο φαρμακοποιός σημείωσε ότι απεβίωσαν (το ΓεΣΥ δεν το δίνει — ποτέ εκτίμηση)."""
+    rows = await CyPatientRepository(tenant_id=tenant_id).aggregate([
+        {"$match": {"deceased.at": {"$exists": True}}}, {"$project": {"pseudo_id": 1}}])
+    return {r["pseudo_id"] for r in rows if r.get("pseudo_id")}
 
 
 def adherence(cs: list[dict[str, Any]], today: date) -> dict[str, Any]:
@@ -123,6 +136,12 @@ def adherence(cs: list[dict[str, Any]], today: date) -> dict[str, Any]:
         "lost_value_cents": sum(c["value_at_stake_cents"] for c in cs if c["status"] == "lost"),
         "next_due": min((c["next_due"] for c in open_), default=None),
     }
+
+
+def _birth_year(dob: Any) -> int | None:
+    import re
+    m = re.match(r"(\d{4})", str(dob or ""))
+    return int(m.group(1)) if m else None
 
 
 async def names_of(tenant_id: str, refs: set[str]) -> dict[str, dict]:
@@ -175,6 +194,7 @@ async def lost_customers(tenant_id: str, *, today: date | None = None) -> dict[s
         kind = "lost" if local_day(last_visit) < first_lost_due else "leak"
         items.append({
             "patient_ref": ref, "kind": kind, "last_visit": last_visit,
+            "visits": sum(c.get("visits") or 0 for c in cs),
             "days_since_visit": ((today or datetime.now(tz=TZ).date()) - local_day(last_visit)).days,
             "lost_prescriptions": len(lost),
             "value_at_stake_cents": sum(c["value_at_stake_cents"] for c in lost),
@@ -188,6 +208,11 @@ async def lost_customers(tenant_id: str, *, today: date | None = None) -> dict[s
         p = names.get(i["patient_ref"]) or {}
         i["patient_name"] = p.get("full_name")
         i["patient_dob"] = p.get("dob")
+        # ΥΠΟΔΕΙΞΗ, όχι συμπέρασμα: τακτικός πελάτης 80+ που δεν ξαναήρθε καθόλου → «αν γνωρίζεις ότι
+        # απεβίωσε, σημείωσέ το». Το σύστημα ΔΕΝ τον σημειώνει ποτέ μόνο του.
+        y = _birth_year(p.get("dob"))
+        i["maybe_deceased"] = bool(i["kind"] == "lost" and y and (today or datetime.now(tz=TZ).date()).year - y >= 80
+                                   and i["visits"] >= 4 and i["days_since_visit"] >= 60)
     summary = {
         "lost": sum(1 for i in items if i["kind"] == "lost"),
         "leak": sum(1 for i in items if i["kind"] == "leak"),

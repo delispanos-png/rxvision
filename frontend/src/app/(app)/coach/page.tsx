@@ -7,6 +7,7 @@ import { Compass, Lightbulb, Lock, Check, BellOff, ArrowRight, Trophy, Flame, Tr
 import { api } from "@/lib/apiClient";
 import { appConfirm } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { Celebrate } from "@/components/coach/Celebrate";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
@@ -40,6 +41,7 @@ type Leak = {
   total: Record<string, number>;
   trend: { before: number; after: number; better: boolean; worse: boolean } | null;
   full_months: number; this_month: string;
+  profit_known?: boolean;   // Κύπρος: false — το XML ΓεΣΥ δεν έχει χονδρική, δεν δείχνουμε κέρδος
 };
 type Goal = { signal: string; label: string; target: number; active: boolean; hit_days: number; of_days: number; progress_text: string; achieved?: boolean; emoji?: string } | null;
 type Week = {
@@ -128,6 +130,21 @@ const SIGNAL_GOALS: Record<string, string> = {
   no_contact: "📇 Κανένας πελάτης χωρίς τηλέφωνο",
 };
 
+// Κύπρος: ίδια κλειδιά, ονόματα με την κυπριακή έννοια (ίδια με backend repositories/cy_daily_coach.py)
+const SIGNAL_EL_CY: Record<string, string> = {
+  ...SIGNAL_EL,
+  unexecuted: "Είδη που δεν δόθηκαν",
+  repeat_expiring: "Φάσεις συνταγών που καθυστερούν",
+  lapsed_chronic: "Πελάτες που σταμάτησαν να έρχονται",
+  advance_due: "Δανεικά που δεν τακτοποιήθηκαν",
+};
+const SIGNAL_GOALS_CY: Record<string, string> = {
+  idle_request: "💬 Κανένα αίτημα χωρίς απάντηση",
+  unexecuted: "💊 Κανένα είδος που δεν δόθηκε χωρίς τηλέφωνο",
+  repeat_expiring: "⏳ Καμία φάση συνταγής να μείνει πίσω",
+  no_contact: "📇 Κανένας πελάτης χωρίς τηλέφωνο",
+};
+
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "good" }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 dark:border-slate-800 dark:bg-slate-800/40">
@@ -161,6 +178,9 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 
 export default function CoachPage() {
   const t = useT();
+  const isCy = useCountry() === "CY";
+  const SIG_EL = isCy ? SIGNAL_EL_CY : SIGNAL_EL;
+  const SIG_GOALS = isCy ? SIGNAL_GOALS_CY : SIGNAL_GOALS;
   const [tab, setTab] = useState<Tab>("today");
   const q = useQuery({ queryKey: ["coach-today"], queryFn: () => api<Today>("/coach/today"), refetchInterval: 600_000 });
   const h = useQuery({ queryKey: ["coach-history"], queryFn: () => api<{ items: Hist[] }>("/coach/history?days=21") });
@@ -325,7 +345,7 @@ export default function CoachPage() {
                             είναι παρατήρηση· με αυτό είναι ενέργεια. */}
                         {(it.who?.amka || it.call || it.who?.email) && (
                           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-                            {it.who?.amka && <span>{t("ΑΜΚΑ", "ΑΜΚΑ")} {it.who.amka}</span>}
+                            {it.who?.amka && <span>{isCy ? t("Κωδ. ΟΑΥ", "HIO code") : t("ΑΜΚΑ", "ΑΜΚΑ")} {it.who.amka}</span>}
                             {it.call ? (
                               dial ? (
                                 <a href={`tel:${dial}`}
@@ -698,7 +718,7 @@ export default function CoachPage() {
                           "Pick ONE thing to improve this month. I'll track it and tell you weekly how it's going.")}
                       </p>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {Object.entries(SIGNAL_GOALS).map(([sig, el]) => (
+                        {Object.entries(SIG_GOALS).map(([sig, el]) => (
                           <button key={sig} onClick={() => saveGoal.mutate({ signal: sig, target: 0 })}
                             className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
                             {el}
@@ -766,7 +786,7 @@ export default function CoachPage() {
                               {r.acted && <span className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">{t("ενήργησες", "acted")}</span>}
                             </td>
                             <td className="px-4 py-2.5 text-slate-500">
-                              <span className="mr-1" aria-hidden>{SIGNAL_EMOJI[r.signal] ?? ""}</span>{SIGNAL_EL[r.signal] ?? r.signal}
+                              <span className="mr-1" aria-hidden>{SIGNAL_EMOJI[r.signal] ?? ""}</span>{SIG_EL[r.signal] ?? r.signal}
                             </td>
                             <td className="px-4 py-2.5 text-right text-slate-700 dark:text-slate-300">{eur(r.value_cents)}</td>
                             <td className="px-4 py-2.5 text-right text-slate-400">{r.days_open}</td>
@@ -788,7 +808,10 @@ export default function CoachPage() {
               <div className="space-y-5">
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                   <p className="text-base leading-relaxed text-slate-800 dark:text-slate-200">
-                    {t(`Τους τελευταίους ${leak.data.months.length} μήνες (ο τρέχων ακόμη τρέχει), ${leak.data.total.repeats_n} επαναλαμβανόμενες συνταγές έληξαν με αχρησιμοποίητες εκτελέσεις και ${leak.data.total.items_n} είδη έφυγαν ανεκτέλεστα. Σε τζίρο είναι ${eur(leak.data.total.total_value)}· σε δικό σου κέρδος ${eur(leak.data.total.total_profit)}.`,
+                    {leak.data.profit_known === false
+                      ? t(`Τους τελευταίους ${leak.data.months.length} μήνες (ο τρέχων ακόμη τρέχει), ${leak.data.total.repeats_n} συνταγές με φάσεις χάθηκαν πριν ολοκληρωθούν, αξίας ${eur(leak.data.total.repeats_value)}, και ${leak.data.total.items_n} είδη συνταγών δεν δόθηκαν.`,
+                        `Over ${leak.data.months.length} months, ${leak.data.total.repeats_n} multi-step prescriptions were lost before completion (${eur(leak.data.total.repeats_value)}) and ${leak.data.total.items_n} prescribed items were not dispensed.`)
+                      : t(`Τους τελευταίους ${leak.data.months.length} μήνες (ο τρέχων ακόμη τρέχει), ${leak.data.total.repeats_n} επαναλαμβανόμενες συνταγές έληξαν με αχρησιμοποίητες εκτελέσεις και ${leak.data.total.items_n} είδη έφυγαν ανεκτέλεστα. Σε τζίρο είναι ${eur(leak.data.total.total_value)}· σε δικό σου κέρδος ${eur(leak.data.total.total_profit)}.`,
                       `Over ${leak.data.months.length} months, ${leak.data.total.repeats_n} repeat prescriptions expired unused and ${leak.data.total.items_n} items went unfilled: ${eur(leak.data.total.total_value)} turnover, ${eur(leak.data.total.total_profit)} gross profit.`)}
                   </p>
                   <p className="mt-2 text-xs leading-relaxed text-slate-500">
@@ -802,10 +825,10 @@ export default function CoachPage() {
                     <thead className="bg-slate-50 text-left text-[11px] uppercase text-slate-400 dark:bg-slate-800/50">
                       <tr>
                         <th className="px-4 py-2 font-semibold">{t("Μήνας", "Month")}</th>
-                        <th className="px-4 py-2 text-right font-semibold">{t("Ληγμένες επαναλ.", "Expired repeats")}</th>
-                        <th className="px-4 py-2 text-right font-semibold">{t("Ανεκτέλεστα", "Unfilled")}</th>
+                        <th className="px-4 py-2 text-right font-semibold">{isCy ? t("Χαμένες συνταγές", "Lost prescriptions") : t("Ληγμένες επαναλ.", "Expired repeats")}</th>
+                        <th className="px-4 py-2 text-right font-semibold">{isCy ? t("Δεν δόθηκαν", "Not dispensed") : t("Ανεκτέλεστα", "Unfilled")}</th>
                         <th className="px-4 py-2 text-right font-semibold">{t("Χαμένος τζίρος", "Lost turnover")}</th>
-                        <th className="px-4 py-2 text-right font-semibold">{t("Χαμένο κέρδος", "Lost profit")}</th>
+                        {leak.data.profit_known !== false && <th className="px-4 py-2 text-right font-semibold">{t("Χαμένο κέρδος", "Lost profit")}</th>}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -818,7 +841,7 @@ export default function CoachPage() {
                           <td className="px-4 py-2.5 text-right text-slate-500">{m.repeats_n}</td>
                           <td className="px-4 py-2.5 text-right text-slate-500">{m.items_n}</td>
                           <td className="px-4 py-2.5 text-right text-slate-700 dark:text-slate-300">{eur(m.total_value)}</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-rose-600 dark:text-rose-400">{eur(m.total_profit)}</td>
+                          {leak.data!.profit_known !== false && <td className="px-4 py-2.5 text-right font-semibold text-rose-600 dark:text-rose-400">{eur(m.total_profit)}</td>}
                         </tr>
                       ))}
                     </tbody>

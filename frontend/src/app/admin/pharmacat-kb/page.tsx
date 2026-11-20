@@ -21,7 +21,33 @@ type Entry = {
   edited_at: string | null;
   last_at: string | null;
   created_at: string | null;
+  scope?: "shared" | "GR" | "CY";
 };
+type Stats = {
+  days: number;
+  entries: { total: number; new: number; never_used: number; edited: number; reuses: number; scope: { shared: number; GR: number; CY: number } };
+  questions: { total: number; cache: number; llm: number; GR: number; CY: number; chat: number; interaction: number; hit_rate: number | null };
+  flags: { new: number; resolved: number; open: number };
+  top_all: { sig: string; query: string | null; hits: number; scope: string }[];
+  top_period: { sig: string; query: string | null; n: number }[];
+};
+const PERIODS: [number, string][] = [[7, "7 ημέρες"], [30, "30 ημέρες"], [90, "90 ημέρες"], [365, "12 μήνες"], [0, "Όλο"]];
+const SCOPE: Record<string, [string, string]> = {
+  shared: ["Κοινή", "bg-slate-100 text-slate-600"],
+  GR: ["Μόνο Ελλάδα", "bg-sky-100 text-sky-700"],
+  CY: ["Μόνο Κύπρος", "bg-amber-100 text-amber-800"],
+};
+const nf = (n: number | null | undefined) => (n ?? 0).toLocaleString("el-GR");
+
+function Kpi({ label, value, sub, tone = "text-slate-800", hint }: { label: string; value: string; sub?: string; tone?: string; hint?: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3" title={hint}>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`mt-0.5 text-2xl font-bold ${tone}`}>{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-slate-500">{sub}</div>}
+    </div>
+  );
+}
 type ListRes = { page: number; page_size: number; total: number; flagged_total: number; items: Entry[] };
 
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString("el-GR") : "—");
@@ -33,10 +59,17 @@ export default function PharmaCatKbPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ query: string; reply: string; substances: string; otc: string }>({ query: "", reply: "", substances: "", otc: "" });
   const [busy, setBusy] = useState<string | null>(null);
+  const [days, setDays] = useState(30);
+  const [sort, setSort] = useState("recent");
+  const stats = useQuery({
+    queryKey: ["admin", "pharmacat-kb", "stats", days],
+    queryFn: () => adminApi<Stats>("/admin/pharmacat-kb/stats?days=" + days),
+    retry: false,
+  });
 
   const list = useQuery({
-    queryKey: ["admin", "pharmacat-kb", term, onlyFlagged],
-    queryFn: () => adminApi<ListRes>("/admin/pharmacat-kb?page_size=60&flagged=" + onlyFlagged + "&q=" + encodeURIComponent(term)),
+    queryKey: ["admin", "pharmacat-kb", term, onlyFlagged, sort],
+    queryFn: () => adminApi<ListRes>("/admin/pharmacat-kb?page_size=60&sort=" + sort + "&flagged=" + onlyFlagged + "&q=" + encodeURIComponent(term)),
     retry: false,
   });
 
@@ -104,9 +137,63 @@ export default function PharmaCatKbPage() {
         <Brain className="h-6 w-6 text-brand-600" /> PharmaCat — Βάση γνώσης
       </div>
       <p className="mb-4 text-sm text-slate-500">
-        Κοινές αποθηκευμένες απαντήσεις του κλινικού βοηθού (σερβίρονται σε όλα τα φαρμακεία).
+        Αποθηκευμένες απαντήσεις του κλινικού βοηθού, κοινές για Ελλάδα και Κύπρο (εκτός όσες αναφέρουν φορείς μιας χώρας).
+        Τα σκευάσματα βγαίνουν πάντα από τον κατάλογο της χώρας του φαρμακείου.
         Διόρθωσε ή διέγραψε μια λάθος/κακο-κατηγοριοποιημένη απάντηση — η διαγραφή προκαλεί νέα ερώτηση στο AI.
       </p>
+
+      {/* Δείκτες: πόσο δουλεύει η βάση γνώσεων στο επιλεγμένο διάστημα */}
+      <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-700">Πώς δουλεύει η βάση γνώσης</div>
+          <div className="flex flex-wrap gap-1">
+            {PERIODS.map(([d, l]) => (
+              <button key={d} onClick={() => setDays(d)}
+                className={`rounded-full px-3 py-1 text-xs font-medium ${days === d ? "bg-brand-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>{l}</button>
+            ))}
+          </div>
+        </div>
+        {stats.isLoading ? <div className="text-xs text-slate-400">Φόρτωση…</div> : stats.data && (() => {
+          const s = stats.data, qd = s.questions, en = s.entries;
+          return (
+            <>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+                <Kpi label="Αποθηκευμένες απαντήσεις" value={nf(en.total)} sub={`+${nf(en.new)} νέες στο διάστημα`} />
+                <Kpi label="Ερωτήσεις" value={nf(qd.total)} sub={`${nf(qd.chat)} κλινικές · ${nf(qd.interaction)} αλληλεπιδράσεις`} />
+                <Kpi label="Από τη βάση" value={qd.hit_rate == null ? "—" : `${qd.hit_rate}%`} tone="text-emerald-600"
+                  sub={`${nf(qd.cache)} χωρίς AI · ${nf(qd.llm)} από AI`} hint="Πόσες ερωτήσεις απαντήθηκαν αμέσως από τη βάση, χωρίς νέα κλήση (και κόστος) AI." />
+                <Kpi label="Νέες ερωτήσεις στο AI" value={nf(qd.llm)} tone="text-violet-600" sub="κάθε μία γίνεται νέα απάντηση στη βάση" />
+                <Kpi label="Σημάνσεις ως λάθος" value={nf(s.flags.new)} tone={s.flags.open ? "text-rose-600" : "text-slate-800"}
+                  sub={`${nf(s.flags.open)} ανοιχτές · ${nf(s.flags.resolved)} διορθώθηκαν`} />
+                <Kpi label="Ανά χώρα (ερωτήσεις)" value={`🇬🇷 ${nf(qd.GR)} · 🇨🇾 ${nf(qd.CY)}`}
+                  sub={`απαντήσεις: ${nf(en.scope.shared)} κοινές · ${nf(en.scope.GR)} ΕΛ · ${nf(en.scope.CY)} ΚΥ`} />
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-3">
+                <Kpi label="Επαναχρησιμοποιήσεις (σύνολο)" value={nf(en.reuses)} sub="φορές που σερβιρίστηκε αποθηκευμένη απάντηση" />
+                <Kpi label="Ποτέ χρησιμοποιημένες" value={nf(en.never_used)} sub="απαντήσεις που δεν ξαναζητήθηκαν" />
+                <Kpi label="Διορθώσεις από admin" value={nf(en.edited)} sub="στο διάστημα" />
+              </div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {[["Οι πιο συχνές (όλο το ιστορικό)", s.top_all.map((x) => ({ q: x.query, n: x.hits, scope: x.scope }))],
+                  ["Οι πιο συχνές στο διάστημα", s.top_period.map((x) => ({ q: x.query, n: x.n, scope: undefined as string | undefined }))]].map(([title, rows]) => (
+                  <div key={title as string} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div className="mb-1.5 text-xs font-semibold text-slate-600">{title as string}</div>
+                    {(rows as { q: string | null; n: number; scope?: string }[]).length === 0
+                      ? <div className="text-xs text-slate-400">Μετριέται από 18/11/2026 — δεν υπάρχουν ακόμη δεδομένα για το διάστημα.</div>
+                      : (rows as { q: string | null; n: number; scope?: string }[]).map((r, i) => (
+                        <button key={i} onClick={() => { if (r.q) { setQ(r.q.slice(0, 60)); setTerm(r.q.slice(0, 60)); } }}
+                          className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-slate-50">
+                          <span className="min-w-0 truncate text-slate-700">{i + 1}. {r.q || <i className="text-slate-400">(άγνωστη ερώτηση)</i>}</span>
+                          <span className="shrink-0 font-semibold text-slate-800">{nf(r.n)}×</span>
+                        </button>
+                      ))}
+                  </div>
+                ))}
+              </div>
+            </>
+          );
+        })()}
+      </div>
 
       <form onSubmit={(e) => { e.preventDefault(); setTerm(q.trim()); }} className="mb-4 flex gap-2">
         <div className="relative flex-1">
@@ -124,6 +211,11 @@ export default function PharmaCatKbPage() {
           <ThumbsDown className="h-3.5 w-3.5" /> {onlyFlagged ? "Όλες οι εγγραφές" : "Μόνο χαρακτηρισμένες ως λάθος"}
           {!!list.data?.flagged_total && <span className="rounded-full bg-rose-600 px-1.5 text-[10px] font-bold text-white">{list.data.flagged_total}</span>}
         </button>
+        <select value={sort} onChange={(e) => setSort(e.target.value)} className="ml-auto rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600">
+          <option value="recent">Πιο πρόσφατες</option>
+          <option value="hits">Πιο συχνές</option>
+          <option value="unused">Ποτέ χρησιμοποιημένες</option>
+        </select>
         <span className="text-xs text-slate-400">
           {list.isLoading ? "Φόρτωση…" : `${list.data?.total ?? 0} εγγραφές${term || onlyFlagged ? " (φιλτραρισμένες)" : ""}`}
         </span>
@@ -139,6 +231,7 @@ export default function PharmaCatKbPage() {
                   {e.query || <span className="italic text-slate-400">(άγνωστη ερώτηση)</span>}
                 </div>
                 <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-400">
+                  {e.scope && <span className={`rounded px-1.5 font-medium ${SCOPE[e.scope]?.[1] ?? ""}`}>{SCOPE[e.scope]?.[0] ?? e.scope}</span>}
                   <span>{e.hits} εμφανίσεις</span>
                   {e.stage && <span>στάδιο: {e.stage}</span>}
                   <span>τελ.: {fmt(e.last_at)}</span>

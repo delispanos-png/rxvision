@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.core.deps import TenantContext, get_current_context
@@ -60,10 +60,11 @@ async def save_note(body: NoteIn):
 
 
 @admin_router.post("/release-notes/{version}/publish")
-async def publish(version: str, published: bool = True):
-    return await release_notes.set_published(version, published)
+async def publish(version: str, published: bool = True,
+                  country: str = Query("GR", pattern="^(GR|CY|ALL)$")):
+    return await release_notes.set_published(version, published, country)
 
 
 @admin_router.delete("/release-notes/{version}")
-async def remove(version: str):
-    return await release_notes.delete(version)
+async def remove(version: str, country: str = Query("GR", pattern="^(GR|CY|ALL)$")):
+    return await release_notes.delete(version, country)

@@ -333,9 +333,15 @@ class AutomationIn(BaseModel):
 
 
 @router.get("/automations/triggers")
-async def automation_triggers(_: TenantContext = Depends(require("portal:manage", module=_MODULE))):
+async def automation_triggers(ctx: TenantContext = Depends(require("portal:manage", module=_MODULE))):
     from app.services import automations
-    return {"triggers": automations.TRIGGERS, "daily_cap": automations.DAILY_CAP}
+    from app.services.cy.gate import tenant_country
+    trig = automations.TRIGGERS
+    if await tenant_country(ctx.tenant_id) == "CY":
+        # Κύπρος: μόνο όσα στηρίζονται σε δεδομένα που έχουμε (επισκέψεις ΓεΣΥ, πύλη)
+        from app.services.cy.marketing import CY_TRIGGERS
+        trig = {k: v for k, v in trig.items() if k in CY_TRIGGERS}
+    return {"triggers": trig, "daily_cap": automations.DAILY_CAP}
 
 
 @router.get("/automations")

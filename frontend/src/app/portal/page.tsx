@@ -108,7 +108,8 @@ function videoEmbed(url?: string | null): string | null {
 
 const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"], ["cyrx", "Οι συνταγές μου", "My prescriptions"]] as const;
 // ΚΥΠΡΟΣ: μόνο ό,τι δεν είναι ελληνικό (ΗΔΥΚΑ/ΑΜΚΑ). Οι συνταγές έρχονται από το ΓεΣΥ (cyrx).
-const CY_TABS = new Set(["cyrx", "shop", "wallet", "availability", "appointments"]);
+// «meds» (Πρόγραμμα λήψης): η δοσολογία έρχεται από το XML ΓεΣΥ (services/cy/meds.py).
+const CY_TABS = new Set(["cyrx", "meds", "shop", "wallet", "availability", "appointments"]);
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
 const NAV_SHORT: Record<string, [string, string]> = { shop: ["Κατάστημα", "Store"], meds: ["Πρόγραμμα", "Schedule"] };
 
@@ -1852,7 +1853,7 @@ export default function PortalHome() {
               {/* ── ΡΥΘΜΙΣΕΙΣ (ποια αγωγή θέλω ενημέρωση) ── */}
               <div className="rounded-2xl bg-gradient-to-br from-violet-50 to-indigo-50 p-4">
                 <div className="text-sm font-semibold text-violet-900">{t("💊 Ποιες αγωγές να σου θυμίζουμε;", "💊 Which treatments should we remind you about?")}</div>
-                <p className="mt-1 text-xs text-violet-700">{t("Φτιαγμένο από τις ", "Built from your ")}<b>{t("οδηγίες του γιατρού σου", "doctor's instructions")}</b>{t(" (όπως καταχωρήθηκαν στην ΗΔΥΚΑ). Άναψε τον διακόπτη σε όσες θες υπενθύμιση — θα εμφανιστούν στο ", " (as recorded in ΗΔΥΚΑ). Turn on the switch for the ones you want reminders for — they'll appear in the ")}<b>{t("Ημερολόγιο", "Calendar")}</b>{t(". ", ". ")}<span className="opacity-70">{t("Ακολούθα πάντα τις οδηγίες του γιατρού/φαρμακοποιού σου.", "Always follow your doctor's/pharmacist's instructions.")}</span></p>
+                <p className="mt-1 text-xs text-violet-700">{t("Φτιαγμένο από τις ", "Built from your ")}<b>{t("οδηγίες του γιατρού σου", "doctor's instructions")}</b>{isCy ? t(" (όπως καταχωρήθηκαν στη συνταγή ΓεΣΥ). Άναψε τον διακόπτη σε όσες θες υπενθύμιση — θα εμφανιστούν στο ", " (as recorded on your GHS prescription). Turn on the switch for the ones you want reminders for — they'll appear in the ") : t(" (όπως καταχωρήθηκαν στην ΗΔΥΚΑ). Άναψε τον διακόπτη σε όσες θες υπενθύμιση — θα εμφανιστούν στο ", " (as recorded in ΗΔΥΚΑ). Turn on the switch for the ones you want reminders for — they'll appear in the ")}<b>{t("Ημερολόγιο", "Calendar")}</b>{t(". ", ". ")}<span className="opacity-70">{t("Ακολούθα πάντα τις οδηγίες του γιατρού/φαρμακοποιού σου.", "Always follow your doctor's/pharmacist's instructions.")}</span></p>
               </div>
               <div className="space-y-2">
                 {sched.therapies.map((th) => {
@@ -1949,7 +1950,7 @@ export default function PortalHome() {
                       {th.reservable && (
                         <div className="mt-2">
                           <button onClick={() => reserveMed(th.name)} className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100">
-                            🔁 {t("Κράτηση επανάληψης", "Reserve a refill")}
+                            🔁 {isCy ? t("Κράτηση επόμενης φάσης", "Reserve the next supply") : t("Κράτηση επανάληψης", "Reserve a refill")}
                           </button>
                         </div>
                       )}

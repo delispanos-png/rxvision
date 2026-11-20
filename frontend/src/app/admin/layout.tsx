@@ -30,6 +30,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Πακέτα & SLA", icon: Boxes, href: "/admin/packages", section: "packages:read" },
       { label: "Add-ons", icon: Sparkles, href: "/admin/addons", section: "packages:read" },
       { label: "Έτοιμος κατάλογος", icon: Boxes, href: "/admin/catalog-seed", section: "tenants:read" },
+      { label: "Κατάλογος ειδών Κύπρου", icon: Boxes, href: "/admin/cy-catalog", section: "tenants:read" },
       { label: "Δοκιμές δυνατοτήτων", icon: FlaskConical, href: "/admin/module-trials", section: "subscriptions:read" },
       { label: "Προμήθειες e-shop", icon: Receipt, href: "/admin/eshop-fees", section: "eshop_fees:read" },
       { label: "Αλλαγές πακέτου", icon: ArrowUpCircle, href: "/admin/plan-changes", section: "subscriptions:read" },

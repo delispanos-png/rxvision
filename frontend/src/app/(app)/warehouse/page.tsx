@@ -23,6 +23,15 @@ function useHasShop(): boolean {
 }
 
 const dmyhm = (iso?: string | null) => (iso ? new Date(iso).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
+/** Μικρογραφία που ΔΕΝ βγαίνει «σπασμένη»: αν η εικόνα δεν φορτώσει, δείχνει το κενό εικονίδιο. */
+function Thumb({ src }: { src: string }) {
+  const [bad, setBad] = useState(false);
+  useEffect(() => setBad(false), [src]);
+  // ΡΗΤΟ μέγεθος: με h-full μέσα σε grid η εικόνα δεν είχε ορισμένο ύψος → οι ψηλές φωτογραφίες
+  // (π.χ. 132×250) έβγαιναν 38×72 και κόβονταν. Τώρα χωρά ΟΛΗ, κεντραρισμένη, σε κάθε αναλογία.
+  return bad ? <ImagePlus className="h-4 w-4 text-slate-300" /> : <img src={src} alt="" loading="lazy" onError={() => setBad(true)} className="block h-9 w-9 bg-white object-contain" />;
+}
+
 type Item = {
   barcode: string; name: string; type: string; category?: string | null;
   stock_qty: number; min_stock?: number; wholesale_cents?: number; price_cents: number;
@@ -32,6 +41,9 @@ type Item = {
   updated_at?: string | null;   // πότε ενημερώθηκε το είδος (οποιαδήποτε πηγή / προμηθευτής)   // από τον έτοιμο κατάλογο RxVision / κλειδωμένο (έληξε)
   barcodes?: string[]; variants?: Variant[];
   cat1_id?: string | null; cat2_id?: string | null; cat3_id?: string | null;
+  // Κύπρος (κατάλογος PharmacyOne): διαδρομή κατηγοριών, μάρκα, ATC, ΦΠΑ, όλοι οι χονδρέμποροι
+  cat_path?: string[]; brand?: string | null; atc?: string | null;
+  suppliers?: { name: string; code?: string | null; wholesale_cents?: number | null; retail_cents?: number | null; stock?: number | null; offer?: string | null }[];
   vat_rate?: number; price_includes_vat?: boolean; usage_video_url?: string | null;
   // ── πωλησιακά χαρακτηριστικά e-shop (worksheet, όταν «στο e-shop») ──
   description_long?: string | null; discount_pct?: number; featured?: boolean; tags?: string[];
@@ -161,19 +173,31 @@ export default function WarehousePage() {
         {/* Μικρογραφία προϊόντος (γρήγορη οπτική αναγνώριση) + hover-zoom για μεγάλη προεπισκόπηση */}
         <div className="group/th relative shrink-0">
           <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800">
-            {src ? <img src={src} alt="" className="h-full w-full object-contain" /> : <ImagePlus className="h-4 w-4 text-slate-300" />}
+            {src ? <Thumb src={src} /> : <ImagePlus className="h-4 w-4 text-slate-300" />}
           </div>
-          {src && <div className="pointer-events-none absolute left-11 top-0 z-50 hidden h-44 w-44 place-items-center rounded-xl border border-slate-200 bg-white p-2 shadow-2xl group-hover/th:grid dark:border-slate-700 dark:bg-slate-800"><img src={src} alt="" className="max-h-full max-w-full object-contain" /></div>}
+          {src && <div className="pointer-events-none absolute left-11 top-0 z-50 hidden h-44 w-44 place-items-center rounded-xl border border-slate-200 bg-white p-2 shadow-2xl group-hover/th:grid dark:border-slate-700 dark:bg-slate-800"><img src={src} alt="" className="block max-h-[10rem] max-w-[10rem] object-contain" /></div>}
         </div>
-        <div className="min-w-0">
-          <div className={`truncate font-medium ${r.active === false ? "text-slate-400 line-through" : "text-slate-800 dark:text-slate-100"}`}>{r.name || "—"}</div>
+        {/* Μέγιστο πλάτος: ένα πολύ μακρύ όνομα δεν πρέπει να «σπρώχνει» τον πίνακα έξω από την οθόνη
+            (κόβονταν Κατάσταση/ενέργειες σε σελίδες με μακριά ονόματα). Ολόκληρο στο hover. */}
+        <div className="min-w-0 max-w-[16rem] sm:max-w-xs lg:max-w-sm 2xl:max-w-xl">
+          <div title={r.name || ""} className={`truncate font-medium ${r.active === false ? "text-slate-400 line-through" : "text-slate-800 dark:text-slate-100"}`}>{r.name || "—"}</div>
           <div className="font-mono text-[10px] text-slate-400">{r.barcode}{r.category ? ` · ${r.category}` : ""} · {TYPE_EL[r.type] ?? r.type}
             {(r.barcodes?.length ?? 0) > 0 && <span className="ml-1 rounded bg-slate-100 px-1 text-slate-500 dark:bg-slate-800">+{r.barcodes!.length} bc</span>}
             {(r.variants?.length ?? 0) > 0 && <span className="ml-1 rounded bg-violet-100 px-1 text-violet-600 dark:bg-violet-950/40">{r.variants!.length} {t("εκδοχές", "variants")}</span>}
             {r.catalog_locked
               ? <span className="ml-1 rounded bg-slate-200 px-1 font-sans font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300" title={t("Ανήκει στον Έτοιμο κατάλογο, που έληξε. Ενεργοποίησε ξανά το πρόσθετο για να το χρησιμοποιήσεις.", "Belongs to the expired ready catalog. Re-activate the add-on to use it.")}>🔒 {t("Κλειδωμένο", "Locked")}</span>
-              : r.origin === "rxvision" && <span className="ml-1 rounded bg-sky-100 px-1 font-sans text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" title={t("Από τον Έτοιμο κατάλογο RxVision", "From the RxVision ready catalog")}>RxVision</span>}
+              : r.origin === "rxvision" ? <span className="ml-1 rounded bg-sky-100 px-1 font-sans text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" title={t("Από τον Έτοιμο κατάλογο RxVision", "From the RxVision ready catalog")}>RxVision</span>
+              : r.origin === "pharmacyone" && <span className="ml-1 rounded bg-sky-100 px-1 font-sans text-sky-700 dark:bg-sky-950/40 dark:text-sky-300" title={t("Από τον κατάλογο της αγοράς της Κύπρου (PharmacyOne)", "From the Cyprus market catalogue (PharmacyOne)")}>PharmacyOne</span>}
           </div>
+          {/* Ό,τι άλλο ξέρουμε για το είδος, χωρίς να ανοίξει η επεξεργασία */}
+          {((r.cat_path?.length ?? 0) > 1 || typeof r.brand === "string" || r.atc || r.vat_rate != null) && (
+            <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10px] text-slate-500">
+              {(r.cat_path?.length ?? 0) > 1 && <span className="truncate" title={r.cat_path!.join(" › ")}>{r.cat_path!.join(" › ")}</span>}
+              {typeof r.brand === "string" && r.brand && <span className="rounded bg-amber-50 px-1 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">{r.brand}</span>}
+              {r.atc && <span className="rounded bg-emerald-50 px-1 font-mono text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300" title="ATC">{r.atc}</span>}
+              {r.vat_rate != null && <span className="rounded bg-slate-100 px-1 dark:bg-slate-800">{t("ΦΠΑ", "VAT")} {r.vat_rate}%</span>}
+            </div>
+          )}
         </div>
       </div>
       );
@@ -184,9 +208,19 @@ export default function WarehousePage() {
     } },
     { key: "cost", header: t("Κόστος", "Cost"), align: "right", sortValue: (r) => r.wholesale_cents ?? 0, render: (r) => r.wholesale_cents ? fmtEur(r.wholesale_cents) : "—" },
     { key: "price", header: t("Λιανική", "Retail"), align: "right", sortValue: (r) => r.price_cents, render: (r) => <span>{fmtEur(r.price_cents)}{margin(r) != null && <span className="ml-1 text-[10px] text-emerald-600">+{margin(r)}%</span>}</span> },
-    { key: "value", header: t("Αξία", "Value"), align: "right", sortValue: (r) => r.stock_qty * (r.wholesale_cents ?? 0), render: (r) => <span className="text-slate-500">{fmtEur(r.stock_qty * (r.wholesale_cents ?? 0))}</span> },
-    { key: "supplier", header: t("Προμηθευτής / Θέση", "Supplier / Location"), render: (r) => <div className="text-xs text-slate-500"><div className="truncate">{r.supplier || "—"}</div>{r.location && <div className="text-[10px] text-slate-400">📍 {r.location}</div>}</div> },
-    { key: "expiry", header: t("Λήξη", "Expiry"), render: (r) => {
+    { key: "value", header: t("Αξία", "Value"), align: "right", hideOnMobile: true, sortValue: (r) => r.stock_qty * (r.wholesale_cents ?? 0), render: (r) => <span className="text-slate-500">{fmtEur(r.stock_qty * (r.wholesale_cents ?? 0))}</span> },
+    { key: "supplier", header: t("Προμηθευτής / Θέση", "Supplier / Location"), render: (r) => {
+      const others = (r.suppliers ?? []).filter((x) => x.name !== r.supplier);
+      // Όλοι οι χονδρέμποροι που το διαθέτουν (Κύπρος): χονδρική · απόθεμα · προσφορά — στο hover
+      const all = (r.suppliers ?? []).map((x) => `${x.name}${x.code ? ` (${x.code})` : ""}: ${x.wholesale_cents ? fmtEur(x.wholesale_cents) : "—"}${x.stock != null ? ` · ${t("απόθ.", "stock")} ${x.stock}` : ""}${x.offer ? ` · ${x.offer}` : ""}`).join("\n");
+      return (
+        <div className="max-w-[10rem] text-xs text-slate-500" title={all || undefined}>
+          <div className="truncate">{r.supplier || "—"}{others.length > 0 && <span className="ml-1 rounded bg-slate-100 px-1 text-[10px] text-slate-500 dark:bg-slate-800">+{others.length}</span>}</div>
+          {r.location && <div className="text-[10px] text-slate-400">📍 {r.location}</div>}
+        </div>
+      );
+    } },
+    { key: "expiry", header: t("Λήξη", "Expiry"), hideOnMobile: true, render: (r) => {
       const d = daysTo(r.expiry);
       const near = d != null && d <= 90;
       return r.expiry ? <span className={`inline-flex items-center gap-1 text-xs ${d != null && d < 0 ? "text-rose-600" : near ? "text-amber-600" : "text-slate-500"}`}>{near && <CalendarClock className="h-3 w-3" />}{dmy(r.expiry)}</span> : <span className="text-slate-300">—</span>;
@@ -494,6 +528,9 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
     if (item.image_id) apiBlob(`/catalog/image/${item.image_id}`).then((b) => { if (!alive) return; obj = URL.createObjectURL(b); setImg(obj); }).catch(() => {});
     return () => { alive = false; if (obj) URL.revokeObjectURL(obj); };
   }, [item.image_id]);
+  // Χωρίς δική του φωτογραφία → η φωτογραφία του καταλόγου (π.χ. PharmacyOne). Η δική του υπερισχύει.
+  const catalogPhoto = !img && !f.image_id ? (item.photo_url || null) : null;
+  const shown = img || catalogPhoto;
   async function uploadPhoto(file: File) {
     setImgBusy(true);
     try { const fd = new FormData(); fd.append("file", file); const r = await apiUpload<{ image_id: string }>("/catalog/image", fd); set("image_id", r.image_id); setImg(URL.createObjectURL(file)); }
@@ -522,11 +559,11 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* Φωτογραφία είδους */}
         <div className="col-span-full flex items-center gap-4">
-          {img ? (
+          {shown ? (
             <button type="button" onClick={() => setImgZoom(true)} title={t("Μεγέθυνση φωτογραφίας", "Enlarge photo")}
-              className="group relative grid h-24 w-24 shrink-0 cursor-zoom-in place-items-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 dark:border-slate-600 dark:bg-slate-800">
+              className="group relative grid h-24 w-24 shrink-0 cursor-zoom-in place-items-center overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-600">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={img} alt={f.name} className="h-full w-full object-cover" />
+              <img src={shown} alt={f.name} className="block h-[5.5rem] w-[5.5rem] object-contain" />
               <span className="absolute inset-0 grid place-items-center text-white opacity-0 transition group-hover:bg-black/40 group-hover:opacity-100 group-focus-visible:bg-black/40 group-focus-visible:opacity-100">
                 <ZoomIn className="h-6 w-6" />
               </span>
@@ -536,14 +573,16 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
               <ImagePlus className="h-7 w-7 text-slate-300" />
             </div>
           )}
-          {imgZoom && img && <PhotoZoom src={img} alt={f.name} onClose={() => setImgZoom(false)} />}
+          {imgZoom && shown && <PhotoZoom src={shown} alt={f.name} onClose={() => setImgZoom(false)} />}
           <div>
             <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200">
               <Upload className="h-4 w-4" /> {imgBusy ? t("Ανέβασμα…", "Uploading…") : t("Φωτογραφία είδους", "Item photo")}
               <input type="file" accept="image/*" className="hidden" onChange={(e) => { const fl = e.target.files?.[0]; if (fl) uploadPhoto(fl); e.target.value = ""; }} />
             </label>
             {img && <button onClick={() => { set("image_id", null); setImg(null); }} className="ml-2 text-xs text-rose-500 underline">{t("Αφαίρεση", "Remove")}</button>}
-            <p className="mt-1 text-[11px] text-slate-400">{t("Εμφανίζεται στον Κατάλογο & στην πύλη πελατών.", "Shown in the Catalog & customer portal.")}</p>
+            <p className="mt-1 text-[11px] text-slate-400">{catalogPhoto
+              ? t("Φωτογραφία από τον κατάλογο. Αν ανεβάσεις δική σου, θα εμφανίζεται εκείνη.", "Photo from the catalogue. If you upload your own, yours is shown.")
+              : t("Εμφανίζεται στον Κατάλογο & στην πύλη πελατών.", "Shown in the Catalog & customer portal.")}</p>
             {!isNew && item.updated_at && (
               <p className="mt-1 text-[11px] text-slate-500">
                 🕒 {t("Τελευταία ενημέρωση", "Last updated")}: <b>{dmyhm(item.updated_at)}</b>
@@ -579,6 +618,42 @@ function EditModal({ item, t, onClose, onDone }: { item: Item; t: (a: string, b:
         {Fld({ k: "location", label: t("Θέση / ράφι", "Location / shelf") })}
         {Fld({ k: "batch", label: t("Παρτίδα", "Batch") })}
         <label className="block text-sm"><span className="mb-1 block text-xs text-slate-500">{t("Ημ. λήξης", "Expiry")}</span><DateInput value={f.expiry ?? ""} onChange={(v) => set("expiry", v)} /></label>
+        {/* Ό,τι ήρθε από τον κατάλογο (π.χ. PharmacyOne): μόνο για ανάγνωση — ο φαρμακοποιός δεν
+            χρειάζεται να το ξαναγράψει, και η νυχτερινή ενημέρωση το κρατά φρέσκο. */}
+        {((item.cat_path?.length ?? 0) > 0 || typeof item.brand === "string" || item.atc || (item.suppliers?.length ?? 0) > 0) && (
+          <div className="col-span-full rounded-xl border border-sky-200 bg-sky-50/60 p-3 text-sm dark:border-sky-900 dark:bg-sky-950/20">
+            <div className="mb-2 text-xs font-semibold text-sky-800 dark:text-sky-300">{t("Από τον κατάλογο", "From the catalogue")}{item.origin === "pharmacyone" ? " · PharmacyOne" : ""}</div>
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-xs sm:grid-cols-3">
+              {(item.cat_path?.length ?? 0) > 0 && <div className="sm:col-span-3"><dt className="inline text-slate-500">{t("Κατηγορία", "Category")}: </dt><dd className="inline text-slate-800 dark:text-slate-100">{item.cat_path!.join(" › ")}</dd></div>}
+              {typeof item.brand === "string" && item.brand && <div><dt className="inline text-slate-500">{t("Μάρκα", "Brand")}: </dt><dd className="inline text-slate-800 dark:text-slate-100">{item.brand}</dd></div>}
+              {item.atc && <div><dt className="inline text-slate-500">ATC: </dt><dd className="inline font-mono text-slate-800 dark:text-slate-100">{item.atc}</dd></div>}
+            </dl>
+            {(item.suppliers?.length ?? 0) > 0 && (
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="text-left text-slate-500"><tr>
+                    <th className="py-1 pr-3 font-medium">{t("Χονδρέμπορος", "Wholesaler")}</th><th className="pr-3 font-medium">{t("Κωδικός", "Code")}</th>
+                    <th className="pr-3 text-right font-medium">{t("Χονδρική", "Wholesale")}</th><th className="pr-3 text-right font-medium">{t("Λιανική", "Retail")}</th>
+                    <th className="pr-3 text-right font-medium">{t("Απόθεμα", "Stock")}</th><th className="font-medium">{t("Προσφορά", "Offer")}</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-sky-100 dark:divide-sky-900/40">
+                    {item.suppliers!.map((x) => (
+                      <tr key={x.name} className={x.name === item.supplier ? "font-semibold" : ""}>
+                        <td className="py-1 pr-3 text-slate-800 dark:text-slate-100">{x.name}{x.name === item.supplier && <span className="ml-1 font-normal text-sky-700">({t("κύριος", "main")})</span>}</td>
+                        <td className="pr-3 font-mono text-slate-500">{x.code || "—"}</td>
+                        <td className="pr-3 text-right">{x.wholesale_cents ? fmtEur(x.wholesale_cents) : "—"}</td>
+                        <td className="pr-3 text-right">{x.retail_cents ? fmtEur(x.retail_cents) : "—"}</td>
+                        <td className={`pr-3 text-right ${x.stock === 0 ? "text-rose-600" : ""}`}>{x.stock ?? "—"}</td>
+                        <td className="text-slate-600 dark:text-slate-300">{x.offer || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Εναλλακτικά barcodes */}
         <label className="col-span-full block text-sm"><span className="mb-1 block text-xs font-medium text-slate-500">{t("Εναλλακτικά barcodes", "Alternate barcodes")} <span className="font-normal text-slate-400">({t("κύριο = πάνω· εδώ επιπλέον, χωρισμένα με κόμμα", "main above; extra here, comma-separated")})</span></span>
           <input value={bcText} onChange={(e) => setBcText(e.target.value)} placeholder="5201234567890, 5209876543210" className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-600 dark:bg-slate-800" /></label>

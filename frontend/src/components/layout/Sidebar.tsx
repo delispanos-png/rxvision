@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +10,7 @@ import { useNavStore } from "@/store/navStore";
 import { usePref, useT } from "@/store/prefStore";
 import { Logo, LogoMark } from "@/components/brand/Logo";
 import { CLOUDON_LOGO_DATA_URI } from "@/components/brand/cloudonLogo";
-import { APP_VERSION } from "@/lib/version";
+import { APP_VERSION, CY_APP_VERSION } from "@/lib/version";
 import { HELP } from "@/lib/help";
 import { Tooltip } from "@/components/ui/Tooltip";
 import {
@@ -202,9 +202,21 @@ export function Sidebar() {
     })
     .filter((g) => g.leaves.length > 0);
 
+  // Η ΠΙΟ ΣΥΓΚΕΚΡΙΜΕΝΗ διαδρομή του μενού που ταιριάζει: χωρίς αυτό το «/cy» (Dashboard) φωτιζόταν και
+  // στο «/cy/campaigns» — δύο ενεργές ομάδες ταυτόχρονα (18/11/2026).
+  const bestBase = useMemo(() => {
+    let best = "";
+    for (const g of GROUPS) for (const n of g.items) for (const h of [n.href, ...(n.children ?? []).map((c) => c.href)]) {
+      if (!h) continue;
+      const b = h.split(/[?#]/)[0];
+      if ((pathname === b || pathname.startsWith(b + "/")) && b.length > best.length) best = b;
+    }
+    return best;
+  }, [pathname, GROUPS]);
   const leafActive = (href: string) => {
     const base = href.split(/[?#]/)[0];
     if (pathname !== base && !pathname.startsWith(base + "/")) return false;
+    if (bestBase && base !== bestBase) return false;
     const frag = href.slice(base.length).replace(/^[?#]/, "");  // "view=list" | "kpi" | "coverage" | ""
     return frag ? loc.includes(frag) : true;
   };
@@ -218,7 +230,7 @@ export function Sidebar() {
       const onPath = (href?: string) => {
         if (!href) return false;
         const base = href.split(/[?#]/)[0];
-        return pathname === base || pathname.startsWith(base + "/");
+        return (pathname === base || pathname.startsWith(base + "/")) && (!bestBase || base === bestBase);
       };
       for (const g of GROUPS) for (const n of g.items) {
         const here = onPath(n.href) || !!n.children?.some((c) => onPath(c.href));
@@ -228,7 +240,7 @@ export function Sidebar() {
       }
       return next;
     });
-  }, [pathname, GROUPS]);   // GROUPS = σταθερός κατάλογος ανά χώρα (αλλάζει μόνο όταν φορτώσει το /auth/me)
+  }, [pathname, GROUPS, bestBase]);   // GROUPS = σταθερός κατάλογος ανά χώρα (αλλάζει μόνο όταν φορτώσει το /auth/me)
 
   const toggle = (label: string) => setExpanded((prev) => {
     const next = new Set(prev); next.has(label) ? next.delete(label) : next.add(label); return next;
@@ -297,7 +309,7 @@ export function Sidebar() {
           ) : (
             <Link href="/whats-new"
               className="block text-center text-[10px] text-slate-400 transition hover:text-brand-600">
-              RxVision v{APP_VERSION}
+              {me?.country === "CY" ? `RxVision Κύπρος v${CY_APP_VERSION}` : `RxVision v${APP_VERSION}`}
             </Link>
           )}
         </div>
