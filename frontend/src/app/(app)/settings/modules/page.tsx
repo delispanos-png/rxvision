@@ -19,6 +19,13 @@ type Pkg = {
 type Sub = {
   plan?: string; status?: string; price?: number; price_monthly?: number;
   billing_cycle?: string; seats?: number; addons_total?: number; modules_included?: string[];
+  offer_lock?: { name?: string; package?: string; since?: string; until?: string; sponsor_name?: string | null; pending_start?: boolean } | null;   // ειδική προσφορά: μόνο πρόσθετα ως τότε
+};
+// Ειδική προσφορά για ΑΥΤΟ το φαρμακείο (λίστα ΑΦΜ στο adminpanel) — ισχύει από την επόμενη ανανέωση
+type SpecialOffer = {
+  id: string; name: string; public_text: string; package: string; package_name?: string; package_changes: boolean;
+  cycle: "monthly" | "yearly"; offer_months: number; starts_at?: string; list_net: number; offer_net: number;
+  sponsor_net: number; pharmacy_net: number; sponsor_name?: string | null; gifts: string[];
 };
 type AddonLite = {
   _id: string; name: string; icon?: string; description?: string;
@@ -95,6 +102,8 @@ export default function ModulesPlanPage() {
   const pkgsQ = useQuery({ queryKey: ["onboarding", "packages"], queryFn: () => api<{ packages: Pkg[] }>("/onboarding/packages"), retry: false });
   const addonsQ = useQuery({ queryKey: ["addons"], queryFn: () => api<{ addons: AddonLite[]; addons_total: number; billing_cycle: "monthly" | "yearly"; card_on_file?: boolean }>("/addons"), retry: false });
   const pendQ = useQuery({ queryKey: ["subscription", "plan-change"], queryFn: () => api<{ pending: Pending | null }>("/subscription/plan-change"), retry: false });
+  const specialQ = useQuery({ queryKey: ["subscription", "special-offer"], queryFn: () => api<{ offer: SpecialOffer | null }>("/subscription/special-offer"), retry: false });
+  const special = specialQ.data?.offer ?? null;
   const methodsQ = useQuery({ queryKey: ["subscription", "payment-methods"], queryFn: () => api<{ methods: { id: string; label: { el: string; en: string } }[] }>("/subscription/payment-methods"), retry: false });
   const enabledMethods = methodsQ.data?.methods ?? [];
 
@@ -256,7 +265,31 @@ export default function ModulesPlanPage() {
     finally { setBusy(false); }
   }
 
+  const offerLock = sub?.offer_lock?.until && new Date(sub.offer_lock.until).getTime() > Date.now() ? sub.offer_lock : null;
+
+  async function acceptSpecial(o: SpecialOffer) {
+    const cyc = o.cycle === "yearly" ? t("έτος", "yr") : t("μήνα", "mo");
+    const ok = await appConfirm(t(
+      `Αποδοχή της προσφοράς «${o.name}»;\n\nΑπό την ανανέωση στις ${dmy(o.starts_at)}: πακέτο ${o.package_name || o.package}${o.package_changes ? " (αλλάζει από το τρέχον)" : ""}, ${o.pharmacy_net > 0 ? `${eur(o.pharmacy_net)}/${cyc} + ΦΠΑ` : "χωρίς χρέωση πακέτου"}${o.sponsor_name ? `, προσφορά της εταιρείας ${o.sponsor_name}` : ""}, για ${o.offer_months} μήνες.\n\nΓια όσο διαρκεί, το πακέτο δεν αλλάζει. Πρόσθετα προσθέτεις κανονικά. Η τρέχουσα περίοδός σου δεν επηρεάζεται.`,
+      `Accept the offer «${o.name}»?\n\nFrom your renewal on ${dmy(o.starts_at)}: package ${o.package_name || o.package}${o.package_changes ? " (changes from your current one)" : ""}, ${o.pharmacy_net > 0 ? `${eur(o.pharmacy_net)}/${cyc} + VAT` : "no package charge"}${o.sponsor_name ? `, offered by ${o.sponsor_name}` : ""}, for ${o.offer_months} months.\n\nWhile it lasts the package stays the same. You can still add add-ons. Your current period is not affected.`),
+      { title: t("Ειδική προσφορά", "Special offer"), confirmText: t("Αποδοχή", "Accept") });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      await api("/subscription/special-offer/accept", { method: "POST" });
+      await Promise.all([qc.invalidateQueries({ queryKey: queryKeys.subscription() }), specialQ.refetch()]);
+      appAlert(t(`Έγινε. Η προσφορά ξεκινά στην ανανέωση στις ${dmy(o.starts_at)}.`, `Done. The offer starts at your renewal on ${dmy(o.starts_at)}.`));
+    } catch (e) {
+      const code = (e as ApiError)?.problem as { detail?: { error?: string } } | undefined;
+      appAlert(code?.detail?.error === "afm_mismatch"
+        ? t("Η ΗΔΥΚΑ δείχνει άλλο ΑΦΜ για το φαρμακείο σου, οπότε η προσφορά δεν μπορεί να ενεργοποιηθεί. Επικοινώνησε μαζί μας.", "ΗΔΥΚΑ shows a different VAT number for your pharmacy, so the offer cannot be activated. Please contact us.")
+        : t("Η προσφορά δεν είναι πια διαθέσιμη.", "The offer is no longer available."));
+      specialQ.refetch();
+    } finally { setBusy(false); }
+  }
+
   function pick(p: Pkg) {
+    if (offerLock) { appAlert(t(`Η συνδρομή σου είναι μέρος της ειδικής προσφοράς «${offerLock.name || ""}» έως ${dmy(offerLock.until)}. Ως τότε το πακέτο μένει ίδιο. Πρόσθετα μπορείς να προσθέσεις κανονικά.`, `Your subscription is part of the special offer «${offerLock.name || ""}» until ${dmy(offerLock.until)}. Until then the package stays the same. You can still add add-ons.`)); return; }
     if (pending) { appAlert(t("Υπάρχει ήδη εκκρεμής αλλαγή πλάνου — ακύρωσέ την πρώτα.", "There's already a pending plan change — cancel it first.")); return; }
     if (priceOf(p) > currentPrice) setUpgradeFor(p);
     else doDowngrade(p);
@@ -364,7 +397,39 @@ export default function ModulesPlanPage() {
 
         {/* ── Διαθέσιμα πακέτα (αναβάθμιση/υποβάθμιση) ──────────────────── */}
         <section>
+          {special && (
+            <div className="mb-4 rounded-2xl border border-indigo-300 bg-indigo-50 p-4 dark:border-indigo-700/60 dark:bg-indigo-950/30">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-indigo-900 dark:text-indigo-200"><Star className="h-4 w-4" /> {t("Ειδική προσφορά για το φαρμακείο σου", "A special offer for your pharmacy")}: «{special.name}»</div>
+                  {special.public_text && <p className="mt-1 text-sm text-indigo-900/90 dark:text-indigo-200/80">{special.public_text}</p>}
+                  <p className="mt-1 text-sm text-indigo-900/90 dark:text-indigo-200/80">
+                    {t(`Πακέτο ${special.package_name || special.package}${special.package_changes ? " (αλλάζει από το τρέχον)" : ""}, για ${special.offer_months} μήνες από την επόμενη ανανέωση (${dmy(special.starts_at)}): `,
+                      `Package ${special.package_name || special.package}${special.package_changes ? " (changes from your current one)" : ""}, for ${special.offer_months} months from your next renewal (${dmy(special.starts_at)}): `)}
+                    <b>{special.pharmacy_net > 0 ? `${eur(special.pharmacy_net)}/${special.cycle === "yearly" ? t("έτος", "yr") : t("μήνα", "mo")} + ${t("ΦΠΑ", "VAT")}` : t("χωρίς χρέωση πακέτου", "no package charge")}</b>
+                    {special.list_net > special.pharmacy_net && <span className="ml-1 text-slate-500 line-through">{eur(special.list_net)}</span>}
+                  </p>
+                  {special.sponsor_name && <p className="mt-0.5 text-sm font-medium text-indigo-900 dark:text-indigo-200">{t(`Την προσφέρει η εταιρεία ${special.sponsor_name}.`, `Offered by ${special.sponsor_name}.`)}</p>}
+                  {special.gifts.length > 0 && <p className="mt-0.5 text-xs text-indigo-800/80 dark:text-indigo-300/80">+ {special.gifts.join(" · ")}</p>}
+                  <p className="mt-1 text-[11px] text-indigo-800/70 dark:text-indigo-300/70">{t("Για όσο διαρκεί, το πακέτο μένει ίδιο. Πρόσθετα προσθέτεις κανονικά. Μία φορά ανά ΑΦΜ.", "While it lasts, the package stays the same. You can still add add-ons. Once per VAT number.")}</p>
+                </div>
+                <button type="button" onClick={() => acceptSpecial(special)} disabled={busy || !!pending} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {t("Αποδοχή", "Accept")}
+                </button>
+              </div>
+            </div>
+          )}
           <h3 className="mb-3 text-sm font-bold text-slate-800 dark:text-slate-100">{t("Διαθέσιμα πακέτα", "Available packages")}</h3>
+          {offerLock && (
+            <p className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800 dark:border-indigo-800/60 dark:bg-indigo-950/30 dark:text-indigo-200">
+              {offerLock.pending_start
+                ? t(`Αποδέχτηκες την ειδική προσφορά «${offerLock.name || ""}». Ξεκινά στην ανανέωσή σου στις ${dmy(offerLock.since)} και ισχύει έως ${dmy(offerLock.until)}. Ως τότε το πακέτο δεν αλλάζει. Πρόσθετα μπορείς να προσθέσεις κανονικά παρακάτω.`,
+                    `You accepted the special offer «${offerLock.name || ""}». It starts at your renewal on ${dmy(offerLock.since)} and lasts until ${dmy(offerLock.until)}. Until then the package does not change. You can still add add-ons below.`)
+                : t(`Έχεις την ειδική προσφορά «${offerLock.name || ""}». Μέχρι ${dmy(offerLock.until)} το πακέτο σου μένει ίδιο, με την τιμή της προσφοράς. Πρόσθετα μπορείς να προσθέσεις κανονικά παρακάτω.`,
+                    `You have the special offer «${offerLock.name || ""}». Until ${dmy(offerLock.until)} your package stays the same, at the offer price. You can still add add-ons below.`)}
+              {offerLock.sponsor_name && <b className="mt-1 block">{t(`Η συνδρομή σου προσφέρεται από: ${offerLock.sponsor_name}.`, `Your subscription is offered by: ${offerLock.sponsor_name}.`)}</b>}
+            </p>
+          )}
           {pkgsQ.isLoading ? (
             <div className="p-6 text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin" /> {t("Φόρτωση…", "Loading…")}</div>
           ) : selectable.length === 0 ? (
@@ -399,7 +464,7 @@ export default function ModulesPlanPage() {
                       ) : (
                         <button
                           type="button"
-                          disabled={busy || !!pending}
+                          disabled={busy || !!pending || !!offerLock}
                           onClick={() => pick(p)}
                           className={`inline-flex w-full items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50 ${isUp ? "bg-brand-600 text-white hover:bg-brand-700" : "border border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300"}`}
                         >

@@ -9,7 +9,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from app.repositories.cy import CyDispensingRepository, CyPatientRepository
+from app.repositories.cy import CyDispensingRepository, CyPatientRepository, find_all
 from app.services.cy import chains as ch
 
 # Αναλώσιμα που μαρτυρούν διαβήτη (ταινίες γλυκόζης, σκαρφιστήρες). Υποκατάστατο διάγνωσης —
@@ -303,8 +303,8 @@ async def recall(tenant_id: str, *, lot: str, gtin: str | None = None) -> dict[s
     match: dict[str, Any] = {"lot": lot}
     if gtin:
         match["gtin"] = gtin.strip()
-    rows = await CyDispensingRepository(tenant_id=tenant_id).find(
-        {"lines.emvs": {"$elemMatch": match}}, sort=[("dispensed_at", -1)], limit=500)
+    rows = await find_all(CyDispensingRepository(tenant_id=tenant_id),       # ανάκληση: ΠΟΤΕ μισή λίστα
+                          {"lines.emvs": {"$elemMatch": match}}, sort=[("dispensed_at", -1)])
     names = await ch.names_of(tenant_id, {r["patient_ref"] for r in rows if r.get("patient_ref")})
     items = []
     for r in rows:

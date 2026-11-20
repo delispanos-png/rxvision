@@ -95,14 +95,24 @@ async def check_afm(afm: str):
             return {"exists": True, "blocked": False, "reactivation": False, "trial_used": True,
                     "mode": "reactivate", "pharmacy_name": None}
         return {"exists": False, "blocked": False, "reactivation": False, "mode": "new",
-                "pharmacy_name": None}
+                "pharmacy_name": None, "special_offer": await _special(afm)}
     # ΜΟΝΟ η επωνυμία επιστρέφεται — είναι ήδη δημόσιο στοιχείο για το ίδιο ΑΦΜ μέσω ΑΑΔΕ
     # (βλ. /onboarding/aade/{afm}). ΠΟΤΕ email/τηλέφωνο/διεύθυνση: θα ήταν διαρροή σε όποιον
     # ξέρει ένα ΑΦΜ.
     t = await shared_db()["tenants"].find_one({"_id": tgt["tenant_id"]}, {"name": 1})
     return {"exists": True, "blocked": tgt["blocked"], "reactivation": not tgt["blocked"],
             "mode": "blocked" if tgt["blocked"] else "reactivate",
-            "pharmacy_name": (t or {}).get("name")}
+            "pharmacy_name": (t or {}).get("name"),
+            "special_offer": None if tgt["blocked"] else await _special(afm)}
+
+
+async def _special(afm: str) -> dict | None:
+    """Ειδική προσφορά για αυτό το ΑΦΜ (μόνο όνομα/πακέτο — ποτέ η λίστα). Το ΑΦΜ ελέγχεται κατά
+    ΑΑΔΕ πρώτα, ώστε να μη γίνεται ψάρεμα με τυχαίους αριθμούς."""
+    from app.services import promotions
+    from app.utils.afm import is_valid
+    afm = (afm or "").strip()
+    return await promotions.special_offer_for_afm(afm) if is_valid(afm) else None
 
 
 @router.post("/offers", dependencies=[Depends(rate_limit("onboarding_offers", limit=120, window_seconds=600))])
@@ -125,6 +135,8 @@ async def offers(body: OfferIn):
             "referral_valid": res["referral_valid"], "promo_code_valid": res["promo_code_valid"],
             "lock_text": res["lock_text"],
             "lock_until": res["price_lock"]["until"] if res.get("price_lock") else None,
+            "sponsor": ({"name": res["sponsor"].get("name"), "pct": res["sponsor"]["pct"],
+                         "gross": res["sponsor_gross"]} if res.get("sponsor") else None),
             "gross_before": res["gross_before"], "gross_after": res["gross_after"],
             "discount_gross": res["discount_gross"]}
 
@@ -149,6 +161,11 @@ async def register_intent(body: IntentIn):
     except OnboardingError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
     pid = pending["pending_id"]
+    if pending.get("no_payment"):
+        # Ειδική προσφορά χωρίς τίποτα να πληρώσει: ίδια διαδρομή με επιβεβαιωμένη πληρωμή (email
+        # ολοκλήρωσης κ.λπ.), χωρίς πάροχο. Το μηδενικό ποσό το υπολόγισε ο server, όχι ο browser.
+        await svc.mark_pending_paid(pid)
+        return {"pending_id": pid, "status": "paid", "amount_cents": 0, "no_payment": True}
     if body.payment_method == "card":
         from app.core.db import shared_db
         from app.services import billing_service, revolut_service, viva_service

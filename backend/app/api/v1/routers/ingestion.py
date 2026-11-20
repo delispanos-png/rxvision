@@ -289,8 +289,8 @@ async def _discover_and_store(tenant_id: str) -> dict:
     vault.set_tenant_credentials(tenant_id, "hdika", merged)
     await TenantRepository(tenant_id=tenant_id).set_ingestion_config("hdika", _public_config(merged))
     # ΑΦΜ της ΗΔΥΚΑ → στοιχεία τιμολόγησης, αν ο πελάτης δεν τα έδωσε (μόνο κενά πεδία)
-    from app.services.billing_identity import fill_from_hdika
-    await fill_from_hdika(tenant_id, merged)
+    from app.services.billing_identity import on_hdika_profile
+    await on_hdika_profile(tenant_id, merged, discovered)
     return discovered
 
 
@@ -375,8 +375,8 @@ async def discover_hdika_pharmacy(
     repo = TenantRepository(tenant_id=ctx.tenant_id)
     vault.set_tenant_credentials(ctx.tenant_id, "hdika", merged)
     await repo.set_ingestion_config("hdika", _public_config(merged))
-    from app.services.billing_identity import fill_from_hdika
-    await fill_from_hdika(ctx.tenant_id, merged)
+    from app.services.billing_identity import on_hdika_profile
+    await on_hdika_profile(ctx.tenant_id, merged, discovered)
     return {"ok": True, "discovered": discovered}
 
 

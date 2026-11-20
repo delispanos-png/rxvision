@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timezone
 
 from app.core.db import shared_db
-from app.repositories.cy import CyDispensingRepository, CyPatientRepository
+from app.repositories.cy import CyDispensingRepository, CyPatientRepository, find_all
 from app.repositories.cy_intelligence import _sex
 from app.repositories.vaccine_programs import VaccineProgramRepository
 from app.services.cy.atc_link import norm_code
@@ -132,8 +132,8 @@ class CyTherapyProgramRepository(VaccineProgramRepository):
             return {"items": [], "total": 0, "counts": {}}
         by_pat = await self._shots(codes)
         manual = await self._manual_doses(str(program.get("_id") or ""), list(by_pat))
-        pats = {p["pseudo_id"]: p for p in await CyPatientRepository(tenant_id=self.tenant_id).find(
-            {"pseudo_id": {"$in": list(by_pat)}}, limit=len(by_pat) + 1)} if by_pat else {}
+        pats = {p["pseudo_id"]: p for p in await find_all(CyPatientRepository(tenant_id=self.tenant_id),
+                                                          {"pseudo_id": {"$in": list(by_pat)}})} if by_pat else {}
         repeat_months = self.repeat_months_of(program)
         doses_required = int(program.get("doses_required") or 1)
         notify_before = int(program.get("notify_before_days") or 30)

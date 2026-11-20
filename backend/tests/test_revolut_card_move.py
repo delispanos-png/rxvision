@@ -26,6 +26,8 @@ async def db(monkeypatch):
     d = AsyncMongoMockClient(tz_aware=True)["card_move"]
     monkeypatch.setattr(bs, "shared_db", lambda: d)
     monkeypatch.setattr(pm, "shared_db", lambda: d)
+    import app.services.promotions as promotions      # bill_due ξεκινά πρώτα τις ειδικές προσφορές
+    monkeypatch.setattr(promotions, "shared_db", lambda: d)
     await d["platform_settings"].insert_one({"_id": "billing", "active_provider": "viva"})
     await d["subscriptions"].insert_one({
         "tenant_id": TID, "payment_provider": "viva", "viva_transaction_id": "v-1",

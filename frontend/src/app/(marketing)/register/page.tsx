@@ -19,6 +19,7 @@ type Offer = {
   promotions: { name: string; public_text: string; discount_net: number; gifts: { module: string; module_name: string; text: string }[] }[];
   referral_valid: boolean | null; promo_code_valid: boolean | null; lock_text: string; lock_until: string | null;
   gross_before: number; gross_after: number; discount_gross: number;
+  sponsor?: { name?: string | null; pct: number; gross: number } | null;   // ειδική προσφορά με χορηγό
 };
 type RegisterResponse = { access_token: string; refresh_token: string; tenant_id: string };
 type Aade = { ok: boolean; error?: string; name?: string; title?: string; doy?: string; address?: string; postal_code?: string; city?: string; active?: boolean };
@@ -98,6 +99,9 @@ export default function RegisterWizard() {
   const [afmErr, setAfmErr] = useState<string | null>(null); // διπλότυπο ΑΦΜ (ενεργή συνδρομή)
   const [reactivation, setReactivation] = useState(false);   // υπάρχων λογαριασμός με ληγμένο/trial → αγορά κανονικού πακέτου
   const [trialUsed, setTrialUsed] = useState(false);         // ΑΦΜ που έχει ήδη χρησιμοποιήσει δωρεάν δοκιμή
+  // Ειδική προσφορά για ΑΥΤΟ το ΑΦΜ (λίστα στο adminpanel): ισχύει μόνο σε ένα πακέτο → το προεπιλέγουμε
+  type Special = { name: string; public_text: string; package: string; package_name?: string | null; cycles: ("monthly" | "yearly")[]; offer_months: number };
+  const [special, setSpecial] = useState<Special | null>(null);
   // ΖΩΝΤΑΝΟΣ εντοπισμός υπάρχοντος πελάτη ΚΑΘΩΣ πληκτρολογεί το ΑΦΜ — δεν τον αφήνουμε να
   // συμπληρώσει ολόκληρη φόρμα εγγραφής για να του πούμε στο τέλος ότι τον ξέρουμε ήδη.
   const [known, setKnown] = useState<{ mode: "reactivate" | "blocked"; pharmacy_name: string | null } | null>(null);
@@ -120,6 +124,9 @@ export default function RegisterWizard() {
     if (ref) setReferralCode(ref);
     const code = (qp.get("code") || "").trim().toUpperCase();
     if (code) setPromoCode(code);
+    // πρόσκληση ειδικής προσφοράς: το ΑΦΜ έρχεται στον σύνδεσμο → ο έλεγχος ΑΦΜ βρίσκει την προσφορά
+    const afmQ = (qp.get("afm") || "").replace(/\D/g, "");
+    if (/^\d{9}$/.test(afmQ)) setCompany((c) => ({ ...c, afm: afmQ }));
     api<{ packages: Pkg[]; sla: Sla[]; addons?: Addon[]; payment_methods?: { id: string; label: { el: string; en: string } }[] }>("/onboarding/packages")
       .then((r) => {
         setPkgs(r.packages || []); setSlaTiers(r.sla || []); setAddonCat(r.addons || []);
@@ -285,13 +292,19 @@ export default function RegisterWizard() {
   // τον ξέρουμε, δίπλα στο πεδίο που κοιτάζει — όχι αφού γεμίσει όλη τη φόρμα.
   useEffect(() => {
     const afm = company.afm.trim();
-    if (!/^\d{9}$/.test(afm)) { setKnown(null); setAfmErr(null); return; }
+    if (!/^\d{9}$/.test(afm)) { setKnown(null); setAfmErr(null); setSpecial(null); return; }
     let alive = true;
     const id = setTimeout(async () => {
       setChecking(true);
       try {
-        const r = await api<{ blocked?: boolean; reactivation?: boolean; trial_used?: boolean; mode?: string; pharmacy_name?: string | null }>(`/onboarding/check-afm/${afm}`);
+        const r = await api<{ blocked?: boolean; reactivation?: boolean; trial_used?: boolean; mode?: string; pharmacy_name?: string | null; special_offer?: Special | null }>(`/onboarding/check-afm/${afm}`);
         if (!alive) return;
+        const so = r.special_offer ?? null;
+        setSpecial(so);
+        if (so && pkgs.some((p) => p._id === so.package)) {
+          setPkgCode(so.package);
+          if (so.cycles.length === 1) setBilling(so.cycles[0]);
+        }
         if (r.blocked) { setKnown({ mode: "blocked", pharmacy_name: r.pharmacy_name ?? null }); setAfmErr(null); }
         else if (r.reactivation || r.trial_used) {
           setKnown({ mode: "reactivate", pharmacy_name: r.pharmacy_name ?? null });
@@ -301,7 +314,8 @@ export default function RegisterWizard() {
       finally { if (alive) setChecking(false); }
     }, 500);
     return () => { alive = false; clearTimeout(id); };
-  }, [company.afm]);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [company.afm, pkgs.length]);   // pkgs: το ΑΦΜ μπορεί να έρθει από τον σύνδεσμο πριν φορτώσουν τα πακέτα
 
   // βήμα «Επόμενο» — στο βήμα εταιρείας ελέγχει διπλότυπο ΑΦΜ πριν προχωρήσει
   async function goNext() {
@@ -338,6 +352,10 @@ export default function RegisterWizard() {
         }),
       });
       if (r.reactivation) setReactivation(true);
+      if (r.status === "paid") {                                               // ειδική προσφορά χωρίς πληρωμή
+        window.localStorage.setItem("signup_pending", r.pending_id);
+        setPendingId(r.pending_id); setBusy(false); return;                    // → κατευθείαν ο κωδικός
+      }
       if (r.checkout_url) {                                                    // κάρτα → Viva
         if (typeof window !== "undefined" && r.pending_id) window.localStorage.setItem("signup_pending", r.pending_id);
         window.location.href = r.checkout_url; return;
@@ -359,6 +377,7 @@ export default function RegisterWizard() {
         : detail === "email_already_registered" ? "Υπάρχει ήδη ενεργή συνδρομή με αυτό το email. Συνδέσου στον λογαριασμό σου."
         : detail === "promo_code_invalid" ? "Ο κωδικός προσφοράς δεν ισχύει για αυτή την επιλογή. Διόρθωσέ τον ή άφησέ τον κενό."
         : detail === "referral_code_invalid" ? "Ο κωδικός σύστασης δεν ισχύει. Διόρθωσέ τον ή άφησέ τον κενό."
+        : detail === "offer_locked" ? "Η συνδρομή αυτού του ΑΦΜ είναι σε ειδική προσφορά που ισχύει ακόμη: μπορεί να συνεχίσει μόνο στο ίδιο πακέτο."
         : "Δεν ξεκίνησε η πληρωμή. Δοκίμασε ξανά.");
       setBusy(false);
     }
@@ -398,6 +417,14 @@ export default function RegisterWizard() {
         {reactivation && !trialUsed && (
           <div className="mx-auto mb-4 max-w-2xl rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">
             <b>Καλώς ήρθες πάλι!</b> Βρήκαμε τον λογαριασμό σου με ληγμένη/δοκιμαστική συνδρομή. Επίλεξε ένα πληρωμένο πακέτο και μετά την πληρωμή <b>ο ΙΔΙΟΣ λογαριασμός σου ενεργοποιείται ξανά</b> (δεν δημιουργείται νέος). Η δωρεάν δοκιμή δεν είναι διαθέσιμη ξανά.
+          </div>
+        )}
+        {special && (
+          <div className="mx-auto mb-4 max-w-2xl rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+            <b>Ειδική προσφορά για το φαρμακείο σου: «{special.name}».</b>{special.public_text ? ` ${special.public_text}` : ""}{" "}
+            Ισχύει στο πακέτο <b>{special.package_name || special.package}</b>{special.cycles.length === 1 ? (special.cycles[0] === "yearly" ? " με ετήσια χρέωση" : " με μηνιαία χρέωση") : ""}, για {special.offer_months} {special.offer_months === 1 ? "μήνα" : "μήνες"}.
+            {" "}Για όσο διαρκεί, η τιμή μένει ίδια και το πακέτο δεν αλλάζει. Πρόσθετα μπορείς να προσθέσεις κανονικά.
+            {pkgCode !== special.package && <span className="mt-1 block font-semibold text-amber-800">Έχεις διαλέξει άλλο πακέτο, οπότε η προσφορά δεν εφαρμόζεται.</span>}
           </div>
         )}
         {trialUsed && (
@@ -664,14 +691,18 @@ export default function RegisterWizard() {
                         <div className="flex justify-between border-t border-slate-200 pt-2"><dt className="text-slate-600">Καθαρή αξία</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur2(netPrice)}</dd></div>
                         <div className="flex justify-between"><dt className="text-slate-600">Φ.Π.Α {vatRate}%</dt><dd className="shrink-0 pl-3 font-medium text-slate-800">{eur2(vatAmount)}</dd></div>
                       </>
-                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className={`font-bold ${offerOk && offer!.discount_gross > 0 ? "text-slate-400 line-through" : "text-brand-700"}`}>{eur2(grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
-                    {offerOk && offer!.discount_gross > 0 && (
+                    <div className="mt-1 flex justify-between border-t border-slate-200 pt-2 text-base"><dt className="font-semibold text-slate-900">Τελική τιμή</dt><dd className={`font-bold ${offerOk && (offer!.discount_gross > 0 || !!offer!.sponsor) ? "text-slate-400 line-through" : "text-brand-700"}`}>{eur2(grossPrice)}<span className="text-xs font-normal text-slate-400">/{per}</span></dd></div>
+                    {offerOk && (offer!.discount_gross > 0 || !!offer!.sponsor) && (
                       <>
                         {offer!.promotions.filter((p) => p.discount_net > 0).map((p) => (
                           <div key={p.name} className="flex justify-between text-emerald-700"><dt>Προσφορά «{p.name}»</dt><dd className="shrink-0 pl-3 font-medium">έκπτωση</dd></div>
                         ))}
-                        <div className="flex justify-between text-base"><dt className="font-semibold text-slate-900">Πληρώνεις τώρα</dt><dd className="font-bold text-brand-700">{eur2(payable)} <span className="text-xs font-normal text-emerald-700">(−{eur2(offer!.discount_gross)})</span></dd></div>
+                        {offer!.sponsor && (
+                          <div className="flex justify-between text-emerald-700"><dt>Το πληρώνει {offer!.sponsor.name || "ο χορηγός"}{offer!.sponsor.pct < 100 ? ` (${offer!.sponsor.pct}% του πακέτου)` : ""}</dt><dd className="shrink-0 pl-3 font-medium">−{eur2(offer!.sponsor.gross)}</dd></div>
+                        )}
+                        <div className="flex justify-between text-base"><dt className="font-semibold text-slate-900">Πληρώνεις τώρα</dt><dd className="font-bold text-brand-700">{payable > 0 ? eur2(payable) : "Τίποτα"}{offer!.discount_gross > 0 && <span className="text-xs font-normal text-emerald-700"> (έκπτωση −{eur2(offer!.discount_gross)})</span>}</dd></div>
                         {!offer!.lock_text && <p className="text-[11px] text-slate-400">Η έκπτωση αφορά την πρώτη πληρωμή. Από την ανανέωση ισχύει η κανονική τιμή.</p>}
+                        {offer!.sponsor && <p className="text-[11px] text-slate-400">Η κάλυψη ισχύει για ένα έτος. Μετά, η συνδρομή ανανεώνεται με την κανονική τιμή και την πληρώνεις εσύ. Θα σου το θυμίσουμε έναν μήνα πριν.</p>}
                       </>
                     )}
                     {offerOk && offer!.lock_text && (
@@ -730,7 +761,10 @@ export default function RegisterWizard() {
                 <div className="rounded-xl bg-brand-50/60 p-3 text-xs text-brand-800">
                   <b>Σύνοψη:</b> {company.title || company.name || "—"} · {pkg?.name || pkgCode} · {yearly ? "ετήσια" : "μηνιαία"} · {seats} χρήστες · SLA: {slaObj?.name || sla || "—"} · <b>Πληρωτέο τώρα: {eur2(payable)}</b> (με ΦΠΑ){offerOk && offer!.promotions.length > 0 ? ` · ${offer!.promotions.map((p) => p.name).join(", ")}` : ""}
                 </div>
-                {payMethod === "card" && payChoice && (
+                {offerOk && payable === 0 && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">Δεν χρειάζεται πληρωμή: η συνδρομή καλύπτεται από την προσφορά. Πάτα «Ολοκλήρωση εγγραφής» για να ορίσεις τον κωδικό σου.</div>
+                )}
+                {payMethod === "card" && payChoice && !(offerOk && payable === 0) && (
                   <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-500">Θα μεταφερθείς σε ασφαλές περιβάλλον {cardProviderName} για την πληρωμή <b>{eur2(payable)}</b> (με ΦΠΑ). Μόλις ολοκληρωθεί, επιστρέφεις για να ορίσεις τον κωδικό σου.</div>
                 )}
                 {bankSubmitted && (
@@ -748,7 +782,7 @@ export default function RegisterWizard() {
               {step < N - 1 ? (
                 <button type="button" disabled={!canNext} onClick={goNext} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-700 px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-800 disabled:opacity-50">Επόμενο <ArrowRight className="h-4 w-4" /></button>
               ) : (
-                <button type="button" disabled={!payChoice || busy || !acceptedTerms} onClick={startPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {payMethod === "card" ? `Πλήρωσε ${eur(price)}` : "Καταχώρηση αιτήματος"}</button>
+                <button type="button" disabled={!payChoice || busy || !acceptedTerms} onClick={startPayment} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />} {offerOk && payable === 0 ? "Ολοκλήρωση εγγραφής" : payMethod === "card" ? `Πλήρωσε ${eur(price)}` : "Καταχώρηση αιτήματος"}</button>
               )}
             </div>
             )}

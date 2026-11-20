@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from app.repositories.cy import CyDispensingRepository, CyLoanRepository
+from app.repositories.cy import CyDispensingRepository, CyLoanRepository, find_all
 from app.services.cy import chains as ch
 
 
@@ -76,9 +76,9 @@ async def pending(tenant_id: str, ids: list, names: dict[str, str], *, limit: in
     if not ids:
         return []
     since = _now() - timedelta(days=60)
-    rows = await CyDispensingRepository(tenant_id=tenant_id).find(
-        {"patient_ref": {"$in": list(ids)}, "dispensed_at": {"$gte": since}},
-        sort=[("dispensed_at", -1)], limit=500)
+    rows = await find_all(CyDispensingRepository(tenant_id=tenant_id),
+                          {"patient_ref": {"$in": list(ids)}, "dispensed_at": {"$gte": since}},
+                          sort=[("dispensed_at", -1)])
     seen: set[str] = set()
     out = []
     for d in rows:
@@ -137,9 +137,10 @@ async def instructions(tenant_id: str, ids: list, names: dict[str, str], *, mont
     if not ids:
         return []
     from app.services.cy.meds import _dosage_text, key_of
-    rows = await CyDispensingRepository(tenant_id=tenant_id).find(
-        {"patient_ref": {"$in": list(ids)}, "dispensed_at": {"$gte": _now() - timedelta(days=30 * max(1, months))}},
-        sort=[("dispensed_at", 1)], limit=2000)
+    rows = await find_all(CyDispensingRepository(tenant_id=tenant_id),
+                          {"patient_ref": {"$in": list(ids)},
+                           "dispensed_at": {"$gte": _now() - timedelta(days=30 * max(1, months))}},
+                          sort=[("dispensed_at", 1)])
     per: dict[str, dict[str, dict]] = {}
     for d in rows:
         for ln in d.get("lines") or []:

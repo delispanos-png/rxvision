@@ -2081,3 +2081,163 @@ def test_cy_router_masks_every_response_in_demo_only():
 def test_cy_demo_never_saves_masked_contact():
     from app.services.cy.masking import has_mask
     assert has_mask("****") and not has_mask("+35799000000") and not has_mask(None)
+
+
+# ── Εκκαθάριση ΟΑΥ & Κερδοφορία ΓεΣΥ (20/11/2026) ────────────────────────────
+
+UNIT_TXT = """Αμοιβή Φαρμακοποιού
+Μήνας: 10
+Έτος: 2026
+Κωδικός Παροχέα Χρέωσης: C0000
+ID Τιμολογίου Τύπος Πληρωμένο Ημερομηνία Παροχέας Υγείας Τιμή Μονάδας Συσκευασίες που Αμοιβή από ΟΑΥ
+EBS Τιμολογίου Τιμολογίου εκτελέστηκαν
+6000001 STANDARD Yes 30/10/2026 C0000 ΦΑΡΜΑΚΕΙΟ ΔΟΚΙΜΗ 1.60 € 2451 3,921.60 €
+ΛΙΜΙΤΕΔ
+Σελίδα 1"""
+
+REM_TXT = """ΚΑΤΑΣΤΑΣΗ ΠΛΗΡΩΜΗΣ
+REMITTANCE ADVICE
+PHARMACY TEST LTD-C0000 Payment Date: 13/11/2026
+Total paid in this batch: 4,112.27
+31/10/2026 CRN-Packages CORRECTION-PackagesSubdivision -.70 EUR -.70
+Sub.
+31/10/2026 PH-EFIM-Oct-26 PH - EFIMERIES-10/2026 (excluding 177.59 EUR 177.59
+VAT)
+01/10/2026 6000000 PH-HCPSERVICES 13.78 EUR 13.78
+31/10/2026 6000001 PH-HCPSERVICES 3,921.60 EUR 3,921.60
+Σύνολο / Total 4,112.27"""
+
+
+def test_settlement_pdf_texts_are_read_exactly():
+    from app.services.cy.settlement import parse_remittance_pdf, parse_unit_pdf
+    u = parse_unit_pdf(UNIT_TXT)
+    assert u["month"] == "2026-10" and u["unit"]["price_cents"] == 160 and u["unit"]["packages"] == 2451
+    assert u["unit"]["fee_cents"] == 392160 and u["unit"]["consistent"] and u["unit"]["invoice_id"] == "6000001"
+    r = parse_remittance_pdf(REM_TXT)["remittance"]
+    assert r["payment_date"] == "2026-11-13" and r["total_cents"] == 411227
+    kinds = {ln["kind"]: ln["cents"] for ln in r["lines"] if ln["kind"] != "services"}
+    assert kinds == {"correction": -70, "duty": 17759}
+    assert sum(ln["cents"] for ln in r["lines"]) == r["total_cents"], "γραμμές = σύνολο πληρωμής"
+
+
+def _xlsx(rows: list[list]) -> bytes:
+    import io
+
+    import openpyxl
+    wb = openpyxl.Workbook()
+    for r in rows:
+        wb.active.append(r)
+    b = io.BytesIO()
+    wb.save(b)
+    return b.getvalue()
+
+
+PAID_HEAD = ["DISPENS. ID", "PRESCRIPTION ID", "STATUS", "TYPE", "CLAIM DATE", "PRESCRIBING DOCTOR NAME", "EXECUTED BY",
+             "CO-PAYMENT", "PC II", "HIO REIMB.", "TOTAL AMT", "VAT *", "NO. OF PACKAGES", "BENEFICIARY NAME",
+             "BENEFICIARY ID", "NO. OF REPETITIONS"]
+PEND_HEAD = ["Αρ. Εκτελ. Συνταγής", "Αρ. Συνταγής", "Κατάσταση", "Όνομα Γιατρού", "Τύπος", "Ημερομηνία Εκτέλεσης",
+             "Εκτέλεση απο", "Συμπλ. & Συνεισφ. ΙΙ", "Ενδ. Αμοιβη ΟΑΥ", "Όνομα Δικαιούχου",
+             "Τύπος Εγγράφου Ταυτοποίησης", "Έγγραφο Ταυτοποίησης", "Αρ. Επανάλ."]
+
+
+async def _settle_seed(mem):
+    from app.services.cy.importer import import_files
+    await import_files(CY, [("1", _rx("8001", "9001", "N-A", "2026-09-29 11:00:00 +0300", 1)),
+                            ("2", _rx("8001", "9002", "N-A", "2026-10-27 12:00:00 +0200", 2)),
+                            ("3", _rx("8002", "9003", "N-B", "2026-10-28 09:00:00 +0200", 1)),
+                            ("4", _rx("8003", "9004", "N-C", "2026-10-30 09:00:00 +0200", 1))], pepper="p")
+    return {d["dispensing_id"]: d async for d in mem["cy_dispensings"].find({})}
+
+
+def _paid_row(d, *, hio_delta=0, name="ΟΝΟΜΑ ΠΕΛΑΤΗ"):
+    from app.services.cy.settlement import packages_of
+    t = d["totals"]
+    return [int(d["dispensing_id"]), 8000, "Paid", "Drugs", "2026-10-28", "ΓΙΑΤΡΟΣ", "ΧΡΗΣΤΗΣ",
+            t["copay"] / 100, t["pc2"] / 100, (t["hio"] + hio_delta) / 100, t["total"] / 100, 0.5,
+            packages_of(d), name, "NID 0000000001", "1 of 6"]
+
+
+async def test_settlement_import_reconcile_and_no_pii(mem, monkeypatch):
+    from app.services.cy import settlement
+    ds = await _settle_seed(mem)
+    paid = _xlsx([PAID_HEAD, _paid_row(ds["9001"]), _paid_row(ds["9002"], hio_delta=5),
+                  [9999, 1, "Paid", "Drugs", "2026-10-20", "", "", 1, 0, 2, 3, 0.1, 1, "X", "Y", ""],
+                  ["Totals", None, None], ["* VAT is included in the Total amount"]])
+    pend = _xlsx([PEND_HEAD, [9003, 8002, "Μερικώς Εκτελεσμένη", "ΓΙΑΤΡΟΣ", "Φάρμακα", "28/10/2026", "Χ", "1.00", "2.00",
+                              "ΟΝΟΜΑ ΠΕΛΑΤΗ", "NID", "0000000002", "1 από 6"]])
+    monkeypatch.setattr(settlement, "_pdf_text", lambda data: UNIT_TXT)
+    res = await settlement.import_files(CY, [("paid.xlsx", paid), ("pend.xlsx", pend), ("unit.pdf", b"%PDF-1.4 x"),
+                                             ("junk.txt", b"hello")])
+    assert sorted(i["kind"] for i in res["imported"]) == ["paid", "pending", "unit"]
+    assert all(i["month"] == "2026-10" for i in res["imported"]) and res["errors"][0]["file"] == "junk.txt"
+    doc = await mem["cy_settlements"].find_one({"tenant_id": CY, "month": "2026-10"})
+    assert "ΟΝΟΜΑ ΠΕΛΑΤΗ" not in repr(doc) and "0000000001" not in repr(doc), "ΠΟΤΕ ονόματα/ταυτότητες"
+    d = await settlement.detail(CY, "2026-10")
+    rc = d["reconcile"]
+    assert rc["ok"] == 1 and [x["id"] for x in rc["diffs"]] == ["9002"] and "hio" in rc["diffs"][0]["fields"]
+    assert [x["id"] for x in rc["missing"]] == ["9999"], "πληρώθηκε αλλά λείπει από το RxVision"
+    assert rc["pending"][0]["id"] == "9003" and rc["pending"][0]["found"] and rc["pending"][0]["status"] == "partial"
+    assert [x["id"] for x in rc["unseen"]] == ["9004"], "του μήνα, πουθενά στα αρχεία του ΟΑΥ"
+    # ξανά-ανέβασμα = αντικατάσταση, όχι διπλό
+    await settlement.import_files(CY, [("paid.xlsx", paid)])
+    assert await mem["cy_settlements"].count_documents({"tenant_id": CY}) == 1
+    assert len((await mem["cy_settlements"].find_one({"tenant_id": CY}))["paid"]) == 3
+    assert await settlement.detail(GR, "2026-10") is None, "ανά φαρμακείο"
+
+
+async def test_profitability_fee_exact_then_provisional(mem, monkeypatch):
+    from datetime import date
+
+    from app.services.cy import analytics, settlement
+    ds = await _settle_seed(mem)
+    r0 = await analytics.profitability(CY, date(2026, 9, 1), date(2026, 11, 1))
+    assert r0["fee"]["available"] is False and r0["totals"]["total_profit"] is None, "χωρίς εκκαθάριση: καμία εικασία"
+    monkeypatch.setattr(settlement, "_pdf_text", lambda data: REM_TXT if data.startswith(b"%PDF-R") else UNIT_TXT)
+    await settlement.import_files(CY, [("u.pdf", b"%PDF-U"), ("r.pdf", b"%PDF-R"),
+                                       ("p.xlsx", _xlsx([PAID_HEAD, _paid_row(ds["9001"]), _paid_row(ds["9002"])]))])
+    r = await analytics.profitability(CY, date(2026, 9, 1), date(2026, 11, 1))
+    f = r["fee"]
+    pk = {k: settlement.packages_of(v) for k, v in ds.items()}
+    assert f["exact_packages"] == pk["9001"] + pk["9002"] and f["exact_cents"] == 160 * f["exact_packages"]
+    assert f["provisional_packages"] == pk["9003"] + pk["9004"] and f["price_month"] == "2026-10"
+    assert r["duty_cents"] == 17759 and r["corrections_cents"] == -70
+    assert r["totals"]["total_profit"] == f["total_cents"] + 17759 - 70 + r["totals"]["profit"]
+    # εφημερίες/διορθώσεις μόνο όταν ο μήνας πληρωμής είναι μέσα στην περίοδο
+    assert (await analytics.profitability(CY, date(2026, 9, 1), date(2026, 10, 1)))["duty_cents"] == 0
+
+
+def test_opened_pack_is_never_costed():
+    from app.services.cy.analytics import _opened_pack
+    assert _opened_pack({"package": "ΠΡΟΣΟΧΗ-ΑΡΙΘΜΟΣ ΤΕΜΑΧΙΩΝ 1. ΣΥΣΚΕΥΑΣΙΑ ΠΟΥ ΑΝΟΙΓΕΙ"})
+    assert not _opened_pack({"package": "PACK WITH 30 TABS IN BLISTER(S)"}) and not _opened_pack({})
+
+
+async def test_no_silent_500_cap_in_reconcile_and_names(mem):
+    """20/11/2026: το `find` κόβει σιωπηλά στα 500 — η Εκκαθάριση έδειχνε «500 ταιριάζουν / 200 λείπουν»
+    για 1.126 σωστές. Συμφωνία, ονόματα, ανάκληση, GDPR περνούν από `find_all` (χωρίς όριο σελίδας)."""
+    from datetime import datetime, timezone
+
+    from app.services.cy import chains, settlement
+    n = 620
+    at = datetime(2026, 10, 10, 9, tzinfo=timezone.utc)
+    await mem["cy_dispensings"].insert_many([
+        {"tenant_id": CY, "dispensing_id": str(700000 + i), "dispensed_at": at, "patient_ref": f"p{i}",
+         "lines": [{"qty_disp": 1, "amounts": {"total": 100}}],
+         "totals": {"total": 100, "hio": 90, "copay": 10, "pc2": 0}} for i in range(n)])
+    await mem["cy_patients"].insert_many([{"tenant_id": CY, "pseudo_id": f"p{i}", "full_name": f"A B{i}"} for i in range(n)])
+    rows = [PAID_HEAD] + [[700000 + i, 1, "Paid", "Drugs", "2026-10-20", "", "", 0.10, 0, 0.90, 1.00, 0.05, 1, "X", "Y", ""]
+                          for i in range(n)]
+    await settlement.import_files(CY, [("p.xlsx", _xlsx(rows))])
+    d = await settlement.detail(CY, "2026-10")
+    assert d["reconcile"]["ok"] == n and d["reconcile"]["missing"] == [] and d["reconcile"]["unseen_count"] == 0
+    assert len(await chains.names_of(CY, {f"p{i}" for i in range(n)})) == n
+
+
+async def test_base_find_all_has_no_page_cap_and_stays_in_tenant(mem):
+    """Ο ΕΝΑΣ ορισμός (BaseRepository.find_all): 790 κατηγορίες στο demo Κύπρου έχαναν 290 στο δέντρο."""
+    from app.repositories.pharmacy_categories import PharmacyCategoryRepository
+    await mem["pharmacy_categories"].insert_many(
+        [{"tenant_id": CY, "name": f"c{i}", "level": 1, "order": i} for i in range(790)]
+        + [{"tenant_id": GR, "name": "ξένη", "level": 1, "order": 0}])
+    tree = await PharmacyCategoryRepository(tenant_id=CY).tree()
+    assert len(tree) == 790 and "ξένη" not in {t["name"] for t in tree}

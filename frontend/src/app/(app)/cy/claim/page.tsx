@@ -52,6 +52,8 @@ export default function CyClaimPage() {
           <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">{t("Μηνιαία απαίτηση ΟΑΥ", "Monthly HIO claim")}</h1>
           <p className="text-sm text-slate-500">{t("Πόσα περιμένεις να πληρωθείς από τον ΟΑΥ κάθε μήνα, από τις εκτελέσεις ΓεΣΥ σου — για να ελέγξεις την εκκαθάριση.",
             "What you expect to be paid by the HIO each month, from your GHS dispensings — to check the settlement.")}</p>
+          <p className="mt-1 text-xs text-slate-500">{t("Τι πληρώθηκες στην πραγματικότητα και η αμοιβή σου: ", "What you were actually paid and your fee: ")}
+            <Link href="/cy/settlement" className="font-medium text-brand-700 underline dark:text-brand-300">{t("Εκκαθάριση ΟΑΥ", "HIO settlement")}</Link></p>
         </div>
         <div className="flex items-center gap-2">
           <select value={d?.month ?? ""} onChange={(e) => setMonth(e.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-900">

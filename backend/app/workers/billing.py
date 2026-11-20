@@ -42,6 +42,15 @@ def charge_eshop_fees() -> dict:
     return asyncio.run(_run())
 
 
+@celery_app.task(name="app.workers.billing.verify_special_offers")
+def verify_special_offers() -> dict:
+    """Ειδικές προσφορές ανά ΑΦΜ: όποια εξαργύρωση δεν επιβεβαιώθηκε από την ΗΔΥΚΑ μέσα σε
+    `promotions.SPECIAL_VERIFY_DAYS` ημέρες ανακαλείται (το ΑΦΜ ξαναγίνεται διαθέσιμο)."""
+    from app.services import promotions
+
+    return asyncio.run(promotions.expire_unverified())
+
+
 @celery_app.task(name="app.workers.billing.purge_expired_trials")
 def purge_expired_trials() -> dict:
     """Ημερήσιος κύκλος ζωής λογαριασμού: ειδοποιήσεις μετά τη λήξη, τελική προειδοποίηση και

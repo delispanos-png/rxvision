@@ -61,7 +61,7 @@ class PatientConsentRepository(BaseRepository):
         oid = _oid(patient_id)
         if not oid:
             return []
-        return await self.find({"patient_id": oid}, sort=[("at", -1), ("_id", -1)], limit=500)
+        return await self.find_all({"patient_id": oid}, sort=[("at", -1), ("_id", -1)])
 
     async def current(self, patient_id) -> dict[str, str]:
         """Latest status per channel for one patient → {channel: status}.
@@ -70,7 +70,7 @@ class PatientConsentRepository(BaseRepository):
         if not oid:
             return {}
         out: dict[str, str] = {}
-        for ev in await self.find({"patient_id": oid}, sort=[("at", -1), ("_id", -1)], limit=500):
+        for ev in await self.find_all({"patient_id": oid}, sort=[("at", -1), ("_id", -1)]):
             ch = ev.get("channel")
             if ch and ch not in out:        # first seen == latest (desc sort)
                 out[ch] = ev.get("status")

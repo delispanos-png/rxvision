@@ -26,7 +26,8 @@ async def _db(monkeypatch, active="revolut"):
     import app.services.addon_service as addon_service
     import app.services.ai_credits as ai_credits
     import app.services.message_wallet as message_wallet
-    for mod in (addon_service, ai_credits, message_wallet):
+    import app.services.promotions as promotions      # bill_due ξεκινά πρώτα τις ειδικές προσφορές
+    for mod in (addon_service, ai_credits, message_wallet, promotions):
         monkeypatch.setattr(mod, "shared_db", lambda: db)
     await db["platform_settings"].insert_one({"_id": "billing", "active_provider": active})
     await db["tenants"].insert_one({"_id": TID, "name": "Φ", "billing_profile": {"email": "a@b.gr"}})

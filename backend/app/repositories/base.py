@@ -65,6 +65,18 @@ class BaseRepository:
             cursor = cursor.sort(sort)
         return jsonsafe(await cursor.skip(skip).limit(limit).to_list(length=limit))
 
+    async def find_all(self, query: dict | None = None, *, sort=None) -> list[dict]:
+        """ΟΛΑ τα έγγραφα — ΧΩΡΙΣ το όριο σελίδας του `find` (MAX_PAGE_SIZE).
+
+        ΓΙΑΤΙ (20/11/2026): το `find(..., limit=len(ids)+1)` / `limit=3000` κόβει ΣΙΩΠΗΛΑ στα 500 — η Εκκαθάριση
+        ΟΑΥ έδειξε «500 ταιριάζουν» για 1.126, το δέντρο κατηγοριών έχανε 290 από 790, η εξαγωγή GDPR θα ήταν
+        ελλιπής. Για ό,τι ΠΡΕΠΕΙ να είναι πλήρες (συμφωνία, ανάκληση, GDPR, λίστες μελών, δέντρα) χρησιμοποίησε
+        αυτό. Περνά από το `aggregate` → ίδια επιβολή tenant."""
+        pipe: list[dict] = [{"$match": query or {}}]
+        if sort:
+            pipe.append({"$sort": dict(sort)})
+        return await self.aggregate(pipe)
+
     async def count(self, query: dict | None = None) -> int:
         return await self._coll.count_documents(self._scope(query))
 

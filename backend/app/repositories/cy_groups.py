@@ -17,7 +17,7 @@ import re
 from datetime import datetime, timezone
 
 from app.repositories.care_accounts import CareAccountRepository, _naive, _oid
-from app.repositories.cy import CyDispensingRepository, CyLoanRepository, CyPatientRepository
+from app.repositories.cy import CyDispensingRepository, CyLoanRepository, CyPatientRepository, find_all
 from app.repositories.cy_intelligence import _sex
 from app.repositories.patient_groups import CARE, PatientGroupRepository
 from app.utils.masking import mask_amka, mask_name
@@ -118,8 +118,8 @@ class CyPatientGroupRepository(PatientGroupRepository):
             return None
         members = [m for m in (g.get("members") or []) if not m.get("left_at")]
         pseudos = [m["pseudo_id"] for m in members if m.get("pseudo_id")]
-        pats = {p["pseudo_id"]: p for p in await self._pats().find(
-            {"pseudo_id": {"$in": pseudos}}, limit=len(pseudos) + 1)} if pseudos else {}
+        pats = {p["pseudo_id"]: p for p in await find_all(self._pats(), {"pseudo_id": {"$in": pseudos}})} \
+            if pseudos else {}
         stats = await self._member_stats(list(pats), date_from=date_from, date_to=date_to)
         rows, totals = [], {"executions": 0, "value": 0, "patient_share": 0, "unexec_value": 0,
                             "loans": 0, "pending": 0}
@@ -190,8 +190,8 @@ class CyCareAccountRepository(CareAccountRepository):
         pseudos = [m["pseudo_id"] for m in (g.get("members") or []) if m.get("pseudo_id") and not m.get("left_at")]
         if not pseudos:
             return []
-        pats = {p["pseudo_id"]: p for p in await CyPatientRepository(tenant_id=self.tenant_id).find(
-            {"pseudo_id": {"$in": pseudos}}, limit=len(pseudos) + 1)}
+        pats = {p["pseudo_id"]: p for p in await find_all(CyPatientRepository(tenant_id=self.tenant_id),
+                                                          {"pseudo_id": {"$in": pseudos}})}
         out = []
         for m in (g.get("members") or []):
             p = pats.get(m.get("pseudo_id"))

@@ -105,3 +105,16 @@ export async function adminApi<T>(path: string, init: RequestInit = {}): Promise
   }
   return res.json() as Promise<T>;
 }
+
+/** Λήψη αρχείου (CSV κ.λπ.) από το adminpanel API: ίδιος έλεγχος ταυτότητας με το `adminApi`,
+ *  αλλά επιστρέφει το σώμα ως Blob αντί για JSON. */
+export async function adminDownload(path: string, filename: string): Promise<void> {
+  let res = await fetch(`${API_BASE}${path}`, { headers: headers({}) });
+  if (res.status === 401 && (await refresh())) res = await fetch(`${API_BASE}${path}`, { headers: headers({}) });
+  if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => null));
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}

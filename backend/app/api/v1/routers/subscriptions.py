@@ -24,6 +24,27 @@ async def get_subscription(ctx: TenantContext = Depends(get_current_context)):
     return sub
 
 
+@router.get("/special-offer")
+async def special_offer(ctx: TenantContext = Depends(get_current_context)):
+    """Ειδική προσφορά για ΑΥΤΟ το φαρμακείο (λίστα ΑΦΜ στο adminpanel): ισχύει από την επόμενη
+    ανανέωση, αν την αποδεχτεί. Ποσά καθαρά (χωρίς ΦΠΑ)."""
+    from fastapi.encoders import jsonable_encoder
+
+    from app.services import promotions
+    return {"offer": jsonable_encoder(await promotions.offer_for_tenant(ctx.tenant_id))}
+
+
+@router.post("/special-offer/accept")
+async def accept_special_offer(ctx: TenantContext = Depends(require("billing:manage"))):
+    from fastapi.encoders import jsonable_encoder
+
+    from app.services import promotions
+    try:
+        return jsonable_encoder(await promotions.accept_for_tenant(ctx.tenant_id, by=getattr(ctx, "email", None)))
+    except promotions.PromotionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail={"error": str(exc)})
+
+
 @router.get("/usage")
 async def usage(ctx: TenantContext = Depends(get_current_context)):
     repo = SubscriptionRepository(tenant_id=ctx.tenant_id)

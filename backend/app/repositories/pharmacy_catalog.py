@@ -305,7 +305,7 @@ class PharmacyCatalogRepository(BaseRepository):
         Καθρεφτίζει τη μηχανή τιμολόγησης (τα rx εξαιρούνται ήδη). Κάθε είδος αποκτά eff_discount_pct
         & sale_cents («τώρα») ώστε η βιτρίνα να δείχνει «πριν/τώρα» χωρίς client-side λογική τιμών."""
         from app.repositories.shop_campaigns import campaign_pct_for
-        rows = await self.find({"active": {"$ne": False}, "for_sale": True}, limit=1000)
+        rows = await self.find_all({"active": {"$ne": False}, "for_sale": True})
         out: list[dict] = []
         for p in rows:
             self_disc = int(p.get("discount_pct") or 0) if sale_active_now(p) else 0  # flash: μόνο εντός παραθύρου
@@ -990,7 +990,7 @@ class PharmacyCatalogRepository(BaseRepository):
                     "sale_category": 1, "narcotic": 1}).sort("full_name", 1)
             .skip((page - 1) * page_size).limit(page_size)]
         bcs = [d["barcode"] for d in rows if d.get("barcode")]
-        active = {p["barcode"] for p in await self.find({"barcode": {"$in": bcs}}, limit=len(bcs) or 1)} if bcs else set()
+        active = {p["barcode"] for p in await self.find_all({"barcode": {"$in": bcs}})} if bcs else set()
         items = [{"barcode": d["barcode"], "name": d.get("full_name") or d.get("name") or "—",
                   "price_cents": d.get("retail_cents") or 0,
                   "category": d.get("sale_category") or medicine_category(d.get("atc")),

@@ -245,6 +245,56 @@ async def hio_claim(month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
     return await insights.hio_claim(ctx.tenant_id, month=month)
 
 
+# ── Εκκαθάριση ΟΑΥ: τα αρχεία πληρωμής που λαμβάνει ο φαρμακοποιός (services/cy/settlement.py) ──
+
+_SETTLE_PERM = "profitability:read"     # οικονομικά στοιχεία φαρμακείου — όπως ο «Σύμβουλός σου»
+
+
+@router.post("/settlement/import")
+async def settlement_import(files: list[UploadFile] = File(...), ctx: TenantContext = Depends(require_cy)):
+    """PDF «Αμοιβή Φαρμακοποιού», PDF «Κατάσταση πληρωμής», Excel «Πληρωμένες απαιτήσεις» /
+    «Εγκεκριμένο» / «Μερικώς εκτελεσμένη». Αναγνώριση από το περιεχόμενο· ξανά-ανέβασμα = αντικατάσταση."""
+    from app.services.cy import settlement
+    _perm(ctx, _SETTLE_PERM)
+    if len(files) > 12:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "too_many_files")
+    payload: list[tuple[str, bytes]] = []
+    for f in files:
+        data = await f.read(settlement.MAX_FILE_BYTES + 1)
+        if len(data) > settlement.MAX_FILE_BYTES:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "too_large")
+        payload.append((f.filename or "file", data))
+    return await settlement.import_files(ctx.tenant_id, payload, by=getattr(ctx, "email", None) or ctx.user_id)
+
+
+@router.get("/settlement")
+async def settlement_months(ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import settlement
+    _perm(ctx, _SETTLE_PERM)
+    return {"items": await settlement.months(ctx.tenant_id)}
+
+
+@router.get("/settlement/{month}")
+async def settlement_detail(month: str, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import settlement
+    _perm(ctx, _SETTLE_PERM)
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_month")
+    d = await settlement.detail(ctx.tenant_id, month)
+    if d is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    return jsonsafe(d)
+
+
+@router.delete("/settlement/{month}")
+async def settlement_delete(month: str, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy import settlement
+    _perm(ctx, _SETTLE_PERM)
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_month")
+    return {"ok": await settlement.delete_month(ctx.tenant_id, month)}
+
+
 @router.get("/doctors")
 async def doctors(days: int = 365, date_from: date | None = None, date_to: date | None = None,
                   ctx: TenantContext = Depends(require_cy)):
@@ -296,8 +346,9 @@ async def dash_top(date_from: date, date_to: date, dim: str = "doctors", limit: 
 async def profitability(date_from: date | None = None, date_to: date | None = None,
                         ctx: TenantContext = Depends(require_cy)):
     """Κέρδος ανά σκεύασμα: έσοδα χωρίς ΦΠΑ − χονδρική της Αποθήκης. Χωρίς χονδρική → όχι στο κέρδος.
-    Ίδιο πρόσθετο με την Ελλάδα (`profitability`)."""
+    Ίδιο πρόσθετο ΚΑΙ ίδιο δικαίωμα με την Ελλάδα (`profitability` / `profitability:read`)."""
     _addon(ctx, "profitability")
+    _perm(ctx, _SETTLE_PERM)
     return await analytics.profitability(ctx.tenant_id, date_from, date_to)
 
 

@@ -59,7 +59,7 @@ class PharmacyCategoryRepository(BaseRepository):
 
     async def tree(self) -> list[dict]:
         """Επίπεδη λίστα (id, name, parent_id, level) — ο frontend χτίζει το δέντρο & το μενού."""
-        rows = await self.find({}, sort=[("level", 1), ("order", 1), ("name", 1)], limit=3000)
+        rows = await self.find_all({}, sort=[("level", 1), ("order", 1), ("name", 1)])
         return jsonsafe([{"id": str(r["_id"]), "name": r.get("name"),
                           "parent_id": r.get("parent_id"), "level": int(r.get("level", 1)),
                           "order": int(r.get("order", 0)), "image_id": r.get("image_id"),
@@ -75,7 +75,7 @@ class PharmacyCategoryRepository(BaseRepository):
 
     async def backfill_icons(self) -> int:
         """Θέτει εικονίδιο (από keyword match) σε όσους κόμβους δεν έχουν — για μεταφερμένες κατηγορίες."""
-        rows = await self.find({"$or": [{"icon": {"$in": [None, ""]}}, {"icon": {"$exists": False}}]}, limit=3000)
+        rows = await self.find_all({"$or": [{"icon": {"$in": [None, ""]}}, {"icon": {"$exists": False}}]})
         n = 0
         for r in rows:
             oid = _oid(r["_id"])   # find() επιστρέφει string _id (jsonsafe) → μετέτρεψέ το σε ObjectId
@@ -127,7 +127,7 @@ class PharmacyCategoryRepository(BaseRepository):
         """Το ίδιο + όλα τα παιδιά/εγγόνια (max 3 επίπεδα)."""
         ids = {str(cat_id)}
         for _ in range(MAX_LEVEL):
-            kids = await self.find({"parent_id": {"$in": list(ids)}}, limit=3000)
+            kids = await self.find_all({"parent_id": {"$in": list(ids)}})
             new = {str(k["_id"]) for k in kids} - ids
             if not new:
                 break

@@ -41,6 +41,7 @@ KIND_LABELS = {
     "topup": "Αγορά credits μηνυμάτων RxVision",
     "ai_credits": "Αγορά AI credits RxVision",
     "extra": "Χρεώσιμη δυνατότητα RxVision",
+    "sponsor": "Χορηγία συνδρομής RxVision",
 }
 
 
@@ -314,6 +315,62 @@ async def create_for_payment(*, tenant_id: str, kind: str, gross_cents: int,
         return doc
     except Exception:  # noqa: BLE001 — best-effort, ποτέ δεν σπάει την πληρωμή
         log.exception("invoice create_for_payment failed (kind=%s tenant=%s)", kind, tenant_id)
+        return None
+
+
+async def create_for_sponsor(*, sponsor: dict, gross_cents: int, source_ref: str, description: str,
+                             comments: str = "", package: str | None = None,
+                             cycle: str | None = None) -> dict | None:
+    """Παραστατικό ΣΤΟΝ ΧΟΡΗΓΟ (όχι σε φαρμακείο) για μια επιβεβαιωμένη ενεργοποίηση ειδικής
+    προσφοράς. Επί πιστώσει: δεν υπάρχει χρέωση κάρτας — η εξόφληση σημειώνεται στο παραστατικό
+    (`settled`), όπως σε κάθε τραπεζική κατάθεση. Idempotent στο `source_ref`. Best-effort.
+
+    Είδος SoftOne: `sponsor` (adminpanel → SoftOne → Είδη → «Χορηγία συνδρομής»)· αν δεν έχει
+    οριστεί, το ετήσιο είδος του πακέτου, αλλιώς το default — ίδια σειρά με κάθε άλλο παραστατικό."""
+    try:
+        gross = int(gross_cents or 0)
+        if gross <= 0:
+            return None
+        db = shared_db()
+        existing = await db["invoices"].find_one({"source_ref": source_ref})
+        if existing:
+            return existing
+        customer = {"afm": (sponsor.get("afm") or "").strip(), "name": sponsor.get("name") or "",
+                    "doy": sponsor.get("doy") or "", "address": sponsor.get("address") or "",
+                    "city": sponsor.get("city") or "", "zip": sponsor.get("postal_code") or "",
+                    "country": sponsor.get("country") or "GR", "email": sponsor.get("email") or "",
+                    "phone": sponsor.get("phone") or ""}
+        rate = VAT_BY_COUNTRY.get(customer["country"], DEFAULT_VAT)
+        net, vat = _split_gross(gross, rate)
+        cfg = await softone_service.platform_config()
+        series = cfg.get("series") or "Α"
+        mm = cfg.get("mtrl_map") or {}
+        cyc = cycle or "yearly"
+        mtrl = (mm.get("sponsor") or (mm.get(f"pkg:{package}:{cyc}") if package else None)
+                or mm.get("default") or None)
+        now = _now()
+        doc = {
+            "tenant_id": None, "sponsor_id": sponsor["_id"], "tenant_name": f"Χορηγός: {sponsor.get('name') or ''}",
+            "auto": True, "kind": "sponsor", "doc_type": "ΤΠΥ", "series": series,
+            "number": await _next_number(db, series), "issue_date": now.date().isoformat(),
+            "description": description, "comments": comments,
+            "net_amount": net, "vat_rate": rate, "vat_amount": vat, "total": gross,
+            "mtrl": mtrl, "item_key": "sponsor", "billing_cycle": cyc, "customer": customer,
+            "payment": {"method": "bank_transfer", "provider": None, "transaction_id": None, "terms": "credit"},
+            "source_ref": source_ref,
+            "status": "pending" if customer["afm"] else "blocked",
+            "blocked_reason": None if customer["afm"] else "missing_afm",
+            "attempts": 0, "last_error": None, "next_attempt_at": now,
+            "aade_status": "not_transmitted", "aade_mark": None, "aade_transmitted_at": None,
+            "softone_findoc": None, "mydata_uid": None, "mydata_aa": None,
+            "created_at": now, "updated_at": now, "issued_at": None,
+        }
+        res = await db["invoices"].insert_one(doc)
+        doc["_id"] = res.inserted_id
+        log.info("sponsor invoice queued: %s €%.2f sponsor=%s", source_ref, gross / 100, sponsor["_id"])
+        return doc
+    except Exception:  # noqa: BLE001 — best-effort
+        log.exception("invoice create_for_sponsor failed (%s)", source_ref)
         return None
 
 

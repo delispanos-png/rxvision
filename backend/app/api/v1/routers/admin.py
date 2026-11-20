@@ -1613,7 +1613,8 @@ async def softone_items(_: PlatformContext = Depends(get_platform_admin)):
 async def _softone_extra_items(db):
     """Χρεώσεις εκτός πακέτων/προσθέτων/credits — ΟΛΕΣ, ώστε καμία να μη φτάνει στη SoftOne χωρίς είδος."""
     for k, nm in (("ai", "Επιπλέον όριο AI"), ("retention", "Επέκταση διατήρησης δεδομένων"),
-                  ("seats", "Επιπλέον χρήστες"), ("eshop_fees", "Προμήθειες e-shop")):
+                  ("seats", "Επιπλέον χρήστες"), ("eshop_fees", "Προμήθειες e-shop"),
+                  ("sponsor", "Χορηγία συνδρομής (ειδικές προσφορές)")):
         yield k, nm
     async for pk in db["ai_credit_packs"].find({}, {"name": 1}):
         yield f"ai_credit:{pk['_id']}", f"Πακέτο AI: {pk.get('name') or pk['_id']}"

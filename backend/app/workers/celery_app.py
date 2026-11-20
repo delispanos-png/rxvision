@@ -67,6 +67,7 @@ _QUEUE_BY_TASK = {
     # Νυχτερινά καθαρίσματα — δεν δικαιούνται θέση «γρήγορου».
     "app.workers.billing.purge_orphan_data": "maintenance",
     "app.workers.billing.purge_expired_trials": "maintenance",
+    "app.workers.billing.verify_special_offers": "maintenance",
     "app.workers.reminders.purge_old_data": "maintenance",
     "app.workers.optical.purge_old_scans": "maintenance",
 }
@@ -383,6 +384,11 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=9, minute=0),
     },
     # Καθαρισμός ληγμένων trials >20 ημ. → αρχειοθέτηση ΑΦΜ στη βάση leads + διαγραφή (καθημερινά 05:45 UTC)
+    # Ειδικές προσφορές: ανάκληση όσων δεν επιβεβαιώθηκαν από την ΗΔΥΚΑ σε 30 ημέρες (06:05 UTC)
+    "verify-special-offers": {
+        "task": "app.workers.billing.verify_special_offers",
+        "schedule": crontab(hour=6, minute=5),
+    },
     "purge-expired-trials": {
         "task": "app.workers.billing.purge_expired_trials",
         "schedule": crontab(hour=5, minute=45),

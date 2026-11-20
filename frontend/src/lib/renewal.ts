@@ -1,5 +1,5 @@
 import { api, ApiError } from "@/lib/apiClient";
-import { appConfirm } from "@/store/dialogStore";
+import { appAlert, appConfirm } from "@/store/dialogStore";
 
 /** Ανανέωση συνδρομής με ΔΙΑΦΑΝΕΙΑ ποσού (01/10/2026).
  *
@@ -19,7 +19,14 @@ export async function startRenewal<R extends { checkout_url?: string }>(
   try {
     return await api<R>(path, { method: "POST", body: JSON.stringify(body) });
   } catch (e) {
-    const d = (e as ApiError)?.problem as { detail?: { error?: string; breakdown?: Breakdown } } | undefined;
+    const d = (e as ApiError)?.problem as { detail?: { error?: string; breakdown?: Breakdown; until?: string } } | undefined;
+    if (e instanceof ApiError && d?.detail?.error === "offer_locked") {
+      // ειδική προσφορά σε ισχύ: ανανέωση μόνο στο ίδιο πακέτο (μία πηγή μηνύματος για όλες τις οθόνες)
+      const until = d.detail.until ? new Date(d.detail.until).toLocaleDateString("el-GR") : "";
+      await appAlert(t(`Η συνδρομή σου είναι μέρος ειδικής προσφοράς${until ? ` έως ${until}` : ""}. Ως τότε ανανεώνεται μόνο στο ίδιο πακέτο.`,
+        `Your subscription is part of a special offer${until ? ` until ${until}` : ""}. Until then it can only be renewed on the same package.`));
+      return null;
+    }
     if (!(e instanceof ApiError) || e.status !== 409 || d?.detail?.error !== "extras_confirm" || !d.detail.breakdown) throw e;
     const b = d.detail.breakdown;
     const lines = [

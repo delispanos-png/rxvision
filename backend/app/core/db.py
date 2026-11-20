@@ -77,6 +77,7 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("cy_dispensings", [("tenant_id", 1), ("prescription_id", 1)], {}),
     ("cy_dispensings", [("tenant_id", 1), ("patient_ref", 1)], {}),
     ("cy_patients", [("tenant_id", 1), ("pseudo_id", 1)], {"unique": True}),
+    ("cy_settlements", [("tenant_id", 1), ("month", 1)], {"unique": True}),
     # ανάκληση παρτίδας: αναζήτηση στο EMVS των γραμμών
     ("cy_dispensings", [("tenant_id", 1), ("lines.emvs.lot", 1)], {}),
     ("pos_sales", [("tenant_id", 1), ("lines.barcode", 1)], {}),
@@ -216,6 +217,10 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("tenants", [("referral_code", 1)], {"unique": True, "sparse": True}),
     ("promotions", [("code", 1)], {"unique": True, "partialFilterExpression": {"code": {"$type": "string"}}}),
     ("promotion_redemptions", [("promotion_id", 1), ("at", -1)], {}),
+    ("special_offer_afms", [("afm", 1), ("status", 1)], {}),
+    ("special_offer_afms", [("promotion_id", 1), ("added_at", -1)], {}),
+    ("sponsors", [("afm", 1)], {"unique": True}),
+    ("sponsor_charges", [("sponsor_id", 1), ("at", -1)], {}),
     # concurrent-session tracking (seat cap): fast live-count per tenant + TTL reaper so a
     # closed/idle browser frees its seat (delete 15′ after last activity — well past the 10′ live window).
     ("user_sessions", [("tenant_id", 1), ("last_active_at", -1)], {}),

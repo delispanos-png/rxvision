@@ -24,7 +24,7 @@ from urllib.parse import quote
 
 from bson import ObjectId
 
-from app.repositories.cy import CyDispensingRepository, CyLoanRepository, CyPatientRepository
+from app.repositories.cy import CyDispensingRepository, CyLoanRepository, CyPatientRepository, find_all
 from app.repositories.cy_intelligence import _sex
 from app.repositories.daily_coach import (ATHENS, MAX_ITEMS, SIGNAL_LABEL, CoachSchool,
                                           DailyCoachRepository, _days_between, _now)
@@ -72,8 +72,8 @@ class CyDailyCoachRepository(DailyCoachRepository):
                 if s.get("cy_pseudo_id"):
                     shell_of[s["_id"]] = s["cy_pseudo_id"]
         refs = {shell_of.get(i, i) for i in ids if isinstance(i, str) or i in shell_of}
-        pats = {p["pseudo_id"]: p for p in await CyPatientRepository(tenant_id=self.tenant_id).find(
-            {"pseudo_id": {"$in": list(refs)}}, limit=len(refs) + 1)}
+        pats = {p["pseudo_id"]: p for p in await find_all(CyPatientRepository(tenant_id=self.tenant_id),
+                                                          {"pseudo_id": {"$in": list(refs)}})}
         out: dict = {}
         for i in ids:
             ref = shell_of.get(i, i) if not isinstance(i, str) else i
@@ -182,8 +182,8 @@ class CyDailyCoachRepository(DailyCoachRepository):
             {"$group": {"_id": "$patient_ref", "value": {"$sum": "$totals.total"}, "last": {"$max": "$dispensed_at"}}}])
         if not rows:
             return []
-        pats = {p["pseudo_id"]: p for p in await CyPatientRepository(tenant_id=self.tenant_id).find(
-            {"pseudo_id": {"$in": [r["_id"] for r in rows]}}, limit=len(rows) + 1)}
+        pats = {p["pseudo_id"]: p for p in await find_all(CyPatientRepository(tenant_id=self.tenant_id),
+                                                          {"pseudo_id": {"$in": [r["_id"] for r in rows]}})}
         missing = [r for r in rows if not ((pats.get(r["_id"]) or {}).get("deceased") or {}).get("at")
                    and not ((pats.get(r["_id"]) or {}).get("contact") or {}).get("mobile")
                    and not ((pats.get(r["_id"]) or {}).get("contact") or {}).get("email")]

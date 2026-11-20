@@ -78,6 +78,9 @@ async def _guard_target(sub: dict, plan: str) -> dict:
         raise PlanChangeError("trial_not_selectable")   # δωρεάν δοκιμή — όχι επιλέξιμο πακέτο
     if plan == sub.get("plan"):
         raise PlanChangeError("already_on_plan")
+    from app.services import promotions
+    if promotions.offer_lock_blocks(sub, plan):
+        raise PlanChangeError("offer_locked")          # ειδική προσφορά: μόνο πρόσθετα όσο διαρκεί
     return pkg
 
 

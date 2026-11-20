@@ -25,6 +25,23 @@ logger = logging.getLogger(__name__)
 _FROM_AADE = ("doy", "address", "postal_code", "city", "title")
 
 
+async def on_hdika_profile(tenant_id: str, merged: dict, discovered: dict) -> None:
+    """ΜΙΑ είσοδος μετά από κάθε ανακάλυψη προφίλ ΗΔΥΚΑ. `merged` = αποθηκευμένοι κωδικοί + ό,τι
+    βρέθηκε· `discovered` = ΜΟΝΟ ό,τι επέστρεψε τώρα η ΗΔΥΚΑ. Η πιστοποίηση ΑΦΜ διαβάζει ΜΟΝΟ το
+    δεύτερο: στη φόρμα ΗΔΥΚΑ το ΑΦΜ μπορεί να γραφτεί με το χέρι."""
+    await fill_from_hdika(tenant_id, merged)
+    try:
+        afm = afm_util.normalize((discovered or {}).get("afm"))
+        if not afm_util.is_valid(afm):
+            return
+        await shared_db()["tenants"].update_one(
+            {"_id": tenant_id}, {"$set": {"hdika_afm": {"afm": afm, "at": datetime.now(timezone.utc)}}})
+        from app.services import promotions
+        await promotions.verify_special_afm(tenant_id, afm)
+    except Exception as exc:  # noqa: BLE001 — η σύνδεση ΗΔΥΚΑ δεν πρέπει να αποτύχει γι' αυτό
+        logger.warning("special-offer AFM verification failed for %s: %s", tenant_id, exc)
+
+
 async def fill_from_hdika(tenant_id: str, discovered: dict) -> dict:
     """Best-effort· επιστρέφει τι συμπληρώθηκε. Ποτέ δεν σηκώνει εξαίρεση στον καλούντα."""
     try:

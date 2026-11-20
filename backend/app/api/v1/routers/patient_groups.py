@@ -120,8 +120,8 @@ async def group_lists_all(gid: str, days: int = Query(45, ge=1, le=120),
         from app.repositories.cy import CyPatientRepository
         from app.services.cy import group_lists as cy_gl
         from app.utils.masking import mask_name
-        pats = await CyPatientRepository(tenant_id=ctx.tenant_id).find(
-            {"pseudo_id": {"$in": pseudos}}, limit=len(pseudos) + 1) if pseudos else []
+        pats = await CyPatientRepository(tenant_id=ctx.tenant_id).find_all(
+            {"pseudo_id": {"$in": pseudos}}) if pseudos else []
         names = {p["pseudo_id"]: mask_name(p.get("full_name"), ctx.demo) for p in pats}
         return await cy_gl.everything(ctx.tenant_id, list(names), names, days=days, months=months)
     names, ids = {}, []
@@ -248,8 +248,7 @@ async def _family_alerts_cy(ctx: TenantContext, repo, patient_id: str) -> dict:
                   if m.get("pseudo_id") and not m.get("left_at") and m["pseudo_id"] != patient_id]
         if not others:
             continue
-        pats = await CyPatientRepository(tenant_id=ctx.tenant_id).find({"pseudo_id": {"$in": others}},
-                                                                       limit=len(others) + 1)
+        pats = await CyPatientRepository(tenant_id=ctx.tenant_id).find_all({"pseudo_id": {"$in": others}})
         names = {p["pseudo_id"]: mask_name(p.get("full_name"), ctx.demo) for p in pats}
         lo = await cy_gl.loans(ctx.tenant_id, list(names), names, limit=50)
         pe = await cy_gl.pending(ctx.tenant_id, list(names), names, limit=50)

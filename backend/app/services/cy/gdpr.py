@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timezone
 
 from app.repositories.base import jsonsafe
-from app.repositories.cy import CyDispensingRepository, CyPatientRepository
+from app.repositories.cy import CyDispensingRepository, CyPatientRepository, find_all
 
 PREFIX = "cy:"
 DIRECT_IDENTIFIERS = ("full_name", "dob", "hio_code", "contact", "notify_prefs")
@@ -37,8 +37,8 @@ async def export(tenant_id: str, subject_id: str) -> dict:
     patient = await CyPatientRepository(tenant_id=tenant_id).find_one({"pseudo_id": ref})
     if not patient:
         raise LookupError("subject_not_found")
-    disp = await CyDispensingRepository(tenant_id=tenant_id).find(
-        {"patient_ref": ref}, sort=[("dispensed_at", -1)], limit=500)
+    disp = await find_all(CyDispensingRepository(tenant_id=tenant_id), {"patient_ref": ref},   # GDPR: ΠΛΗΡΗΣ εξαγωγή
+                          sort=[("dispensed_at", -1)])
     return jsonsafe({
         "exported_at": datetime.now(tz=timezone.utc).isoformat(),
         "subject_id": subject_id, "tenant_id": tenant_id,

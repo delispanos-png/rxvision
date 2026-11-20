@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.repositories.cy import CyDispensingRepository, CyPatientRepository
+from app.repositories.cy import CyDispensingRepository, CyPatientRepository, find_all
 
 TZ = ZoneInfo("Asia/Nicosia")
 # Προεπιλογές. Οι ΙΣΧΥΟΥΣΕΣ τιμές έρχονται από το adminpanel (gate.cy_rules) σε κάθε υπολογισμό.
@@ -147,16 +147,9 @@ def _birth_year(dob: Any) -> int | None:
 async def names_of(tenant_id: str, refs: set[str]) -> dict[str, dict]:
     if not refs:
         return {}
-    pats = await CyPatientRepository(tenant_id=tenant_id).find(
-        {"pseudo_id": {"$in": list(refs)}}, limit=min(500, len(refs)))
-    found = {p["pseudo_id"]: p for p in pats}
-    missing = [r for r in refs if r not in found]
-    # >500 πελάτες: δεύτερο πέρασμα σε κομμάτια (το find έχει ανώτατο όριο σελίδας)
-    for i in range(0, len(missing), 500):
-        for p in await CyPatientRepository(tenant_id=tenant_id).find(
-                {"pseudo_id": {"$in": missing[i:i + 500]}}, limit=500):
-            found[p["pseudo_id"]] = p
-    return found
+    # ΕΝΑΣ ορισμός για «όλα, χωρίς όριο σελίδας» (repositories/cy.py::find_all)
+    return {p["pseudo_id"]: p for p in await find_all(CyPatientRepository(tenant_id=tenant_id),
+                                                      {"pseudo_id": {"$in": list(refs)}})}
 
 
 async def open_prescriptions(tenant_id: str, *, status: str | None = None,

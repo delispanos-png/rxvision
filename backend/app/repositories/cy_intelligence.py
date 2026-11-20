@@ -24,7 +24,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.repositories.base import jsonsafe
-from app.repositories.cy import CyDispensingRepository, CyPatientRepository
+from app.repositories.cy import CyDispensingRepository, CyPatientRepository, find_all
 from app.repositories.patient_intelligence import (SEGMENTS, PatientIntelligenceRepository, _band, _now,
                                                    _pct, _yago)
 from app.services.cy import chains as ch
@@ -244,7 +244,7 @@ class CyPatientIntelligenceRepository(PatientIntelligenceRepository):
         now = datetime.now(tz=TZ)
         tstart = now.replace(hour=0, minute=0, second=0, microsecond=0)
         tend = tstart + timedelta(days=1)
-        disp = await self._disp().find({"dispensed_at": {"$gte": tstart, "$lt": tend}}, limit=500)
+        disp = await find_all(self._disp(), {"dispensed_at": {"$gte": tstart, "$lt": tend}})
         pts_y = await self._exec_totals(_yago(tstart), _yago(now))
         latest = await self._disp().find({}, sort=[("dispensed_at", -1)], limit=1)
         by_h: dict = defaultdict(lambda: {"rx": 0, "value": 0})

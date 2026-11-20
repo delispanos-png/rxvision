@@ -260,7 +260,7 @@ class AdvanceDispensingRepository(BaseRepository):
         if q and q.strip():
             rx = {"$regex": _re.escape(q.strip()), "$options": "i"}
             flt = {"$and": [flt, {"$or": [{"patient_name": rx}, {"amka": rx}]}]}
-        rows = await self.find(flt, sort=[("closed_at", -1), ("created_at", -1)], limit=5000)
+        rows = await self.find_all(flt, sort=[("closed_at", -1), ("created_at", -1)])
         users = {str(u["_id"]): u.get("full_name") or u.get("email") async for u in self._db["users"].find(
             {"tenant_id": self.tenant_id}, {"full_name": 1, "email": 1})}
         prx = _re.compile(_re.escape(product.strip()), _re.I) if product and product.strip() else None
@@ -319,7 +319,7 @@ class AdvanceDispensingRepository(BaseRepository):
     async def overdue(self) -> dict:
         """Τι αργεί — ένα κατώφλι για όλα, ενημερωτικά."""
         cut = _now() - timedelta(days=OVERDUE_DAYS)
-        rows = await self.find({"status": OPEN}, sort=[("created_at", 1)], limit=500)
+        rows = await self.find_all({"status": OPEN}, sort=[("created_at", 1)])
         late = [r for r in rows if r.get("created_at") and r["created_at"] <= cut]
         return {"items": late, "counts": {"overdue": len(late), "open": len(rows)}}
 

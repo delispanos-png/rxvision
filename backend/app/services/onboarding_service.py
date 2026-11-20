@@ -288,10 +288,14 @@ class OnboardingService:
             buyer_tenant=reactivate_tid, package_net=parts["package_net"], total_net=parts["total_net"],
             addon_prices=parts["addon_prices"])
         gross_before = gross_from_price(parts["total_net"], parts["includes_vat"], country)
-        gross_after = gross_from_price(parts["total_net"] - q["discount_net"], parts["includes_vat"], country)
+        sponsor_net = int((q.get("sponsor") or {}).get("net") or 0)
+        gross_after = gross_from_price(parts["total_net"] - q["discount_net"] - sponsor_net,
+                                       parts["includes_vat"], country)
+        sponsor_gross = gross_from_price(sponsor_net, parts["includes_vat"], country) if sponsor_net else 0
         return {**q, "parts": parts, "reactivate_tenant_id": reactivate_tid,
                 "gross_before": gross_before, "gross_after": gross_after,
-                "discount_gross": gross_before - gross_after}
+                "sponsor_gross": sponsor_gross,
+                "discount_gross": gross_before - gross_after - sponsor_gross}
 
     async def create_pending(self, *, pharmacy_name: str, country: str, owner_email: str,
                              owner_name: str, company: dict, package_code: str | None,
@@ -330,13 +334,27 @@ class OnboardingService:
             promo_code=promo_code, referral_code=referral_code, buyer_afm=afm,
             buyer_tenant=reactivate_tid, package_net=parts["package_net"], total_net=parts["total_net"],
             addon_prices=parts["addon_prices"])
+        if reactivate_tid:
+            # ειδική προσφορά σε ισχύ (π.χ. μηνιαία που δεν ανανεώθηκε): η επανενεργοποίηση δεν
+            # παρακάμπτει το κλείδωμα πακέτου
+            sub0 = await db["subscriptions"].find_one({"tenant_id": reactivate_tid}, {"offer_lock": 1})
+            if promotions.offer_lock_blocks(sub0, package_code):
+                raise OnboardingError("offer_locked")
         if q["promo_code_valid"] is False:
             raise OnboardingError("promo_code_invalid")
         if q["referral_valid"] is False:
             raise OnboardingError("referral_code_invalid")
         # Καθαρό σύνολο → χρεώσιμο ΜΕ ΦΠΑ (αν οι τιμές είναι καθαρές). create_for_payment αφαιρεί ΦΠΑ στο παραστατικό.
         from app.services.invoice_service import gross_from_price
-        amount = gross_from_price(parts["total_net"] - q["discount_net"], parts["includes_vat"], country)
+        # Ό,τι πληρώνει ο χορηγός ΔΕΝ το πληρώνει το φαρμακείο (χρεώνεται στον χορηγό μετά την ΗΔΥΚΑ)
+        sponsor = q.get("sponsor")
+        amount = gross_from_price(parts["total_net"] - q["discount_net"] - int((sponsor or {}).get("net") or 0),
+                                  parts["includes_vat"], country)
+        # Τίποτα να πληρώσει (δωρεάν ειδική προσφορά ή όλα από χορηγό) → χωρίς πληρωμή. ΜΟΝΟ από
+        # ειδική προσφορά: οι δημόσιες ενέργειες δεν κατεβαίνουν ποτέ κάτω από 1 € (MIN_PAYABLE_NET).
+        no_payment = amount <= 0 and any(x.get("audience") == "afm_list" for x in q["promotions"])
+        if amount <= 0 and not no_payment:
+            raise OnboardingError("invalid_amount")
         status = "paid" if is_trial else ("awaiting_payment" if payment_method == "card" else "awaiting_bank_approval")
         pid = uuid.uuid4().hex
         await db["pending_registrations"].insert_one({
@@ -352,10 +370,11 @@ class OnboardingService:
             "promotions": q["promotions"], "discount_net": q["discount_net"],
             "promo_code": q["promo_code"], "referrer_tenant_id": q["referrer_tenant_id"],
             "price_lock": q["price_lock"],
+            "sponsor": sponsor, "no_payment": no_payment,
             "expires_at": _now() + timedelta(hours=2),
         })
         return {"pending_id": pid, "amount_cents": amount, "is_trial": is_trial,
-                "promotions": q["promotions"],
+                "promotions": q["promotions"], "no_payment": no_payment,
                 "reactivation": bool(reactivate_tid)}
 
     async def mark_pending_paid(self, pending_id: str, viva_transaction_id: str | None = None,
@@ -509,6 +528,12 @@ class OnboardingService:
         await db["pending_registrations"].update_one(
             {"_id": pending_id}, {"$set": {"status": "completed",
                                            "completed_tenant_id": res["tenant_id"], "completed_at": _now()}})
+        if p.get("no_payment"):
+            # Πληρωμένη συνδρομή (ΟΧΙ δοκιμή) χωρίς κάρτα: την καλύπτει η ειδική προσφορά/ο χορηγός.
+            # Στο τέλος της περιόδου → κανονικό περιθώριο και ανανέωση από τη σύνδεση (expire_overdue).
+            await db["subscriptions"].update_one({"tenant_id": res["tenant_id"]}, {"$set": {
+                "payment_status": "no_card", "payment_provider": None, "viva_transaction_id": None,
+                "payment_source": "sponsor" if (p.get("sponsor") or {}).get("sponsor_id") else "offer"}})
         # Παραστατικό πρώτης συνδρομής (μόνο paid — όχι δωρεάν trial).
         if not p.get("is_trial") and p.get("amount_cents"):
             from app.services import invoice_service
@@ -517,7 +542,8 @@ class OnboardingService:
                 description=(f"Συνδρομή RxVision «{(await db['packages'].find_one({'_id': p.get('package_code')}, {'name': 1}) or {}).get('name') or p.get('package_code') or ''}» "
                              f"({invoice_service.cycle_el(p.get('billing_cycle'))}) — πρώτη περίοδος"
                              + "".join(f" · Προσφορά «{x.get('name')}»" for x in p.get("promotions") or []
-                                       if x.get("discount_net"))),
+                                       if x.get("discount_net"))
+                             + (" · Μέρος της συνδρομής καλύπτεται από χορηγό" if (p.get("sponsor") or {}).get("net") else "")),
                 payment={"method": p.get("payment_method") or "card", "provider": p.get("card_provider") or "viva",
                          "transaction_id": p.get("revolut_order_id") or p.get("viva_transaction_id")})
         if p.get("promotions") or p.get("price_lock"):

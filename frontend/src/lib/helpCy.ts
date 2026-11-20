@@ -132,10 +132,12 @@ export const HELP_CY: Record<string, Help> = {
   },
   "/cy/profitability": {
     title: "Κερδοφορία", title_en: "Profitability",
-    intro: "Κέρδος ανά σκεύασμα στην περίοδο: έσοδα χωρίς ΦΠΑ μείον χονδρική.",
-    intro_en: "Profit per product in the period: revenue excl. VAT minus wholesale.",
-    logic: "Έσοδα = ΟΑΥ + πελάτης, χωρίς ΦΠΑ (φάρμακα 5%, αναλώσιμα 19%, ή ό,τι γράφει η Αποθήκη). Η χονδρική έρχεται από την Αποθήκη με το barcode, γιατί το XML ΓεΣΥ δεν τη γράφει. Χωρίς χονδρική το σκεύασμα δεν μπαίνει στο κέρδος· η «Κάλυψη» λέει πόσο από τα έσοδα μετρήθηκε.",
-    logic_en: "Revenue = HIO + customer, excluding VAT (drugs 5%, consumables 19%, or the Warehouse rate). Wholesale comes from the Warehouse by barcode, as the GHS XML has none. Without it a product is left out of profit; «Coverage» shows how much of the revenue was measured.",
+    intro: "Πόσα κερδίζεις στην περίοδο: αμοιβή ΟΑΥ, εφημερίες και διαφορά ΓεΣΥ − χονδρικής.",
+    intro_en: "What you earn in the period: HIO fee, duty nights and the GHS − wholesale difference.",
+    logic: "Ο ΟΑΥ πληρώνει τα φάρμακα στη χονδρική, άρα το κέρδος είναι η αμοιβή ανά συσκευασία (συσκευασίες × τιμή μονάδας του μήνα, από την Εκκαθάριση ΟΑΥ — προσωρινή με την τελευταία γνωστή τιμή όπου δεν έχει έρθει ακόμα εκκαθάριση), οι εφημερίες και οι διορθώσεις, και η διαφορά ανάμεσα στην πληρωμή ΓεΣΥ χωρίς ΦΠΑ και στη χονδρική της Αποθήκης.",
+    logic_en: "The HIO pays medicines at wholesale, so profit is the fee per package (packages × the month's unit price, from the HIO settlement — provisional with the latest known price where no settlement has arrived yet), duty nights and corrections, and the difference between the GHS payment excl. VAT and the Warehouse wholesale.",
+    how: ["Ανέβασε κάθε μήνα τα αρχεία στην Εκκαθάριση ΟΑΥ.", "Διάλεξε περίοδο.", "Δες στον πίνακα ποια είδη πληρώνονται κάτω από τη χονδρική."],
+    how_en: ["Upload the files to HIO settlement every month.", "Pick a period.", "See in the table which items are paid below wholesale."],
     manual: "📈 Κερδοφορία",
   },
   "/cy/reorder": {
@@ -167,6 +169,16 @@ export const HELP_CY: Record<string, Help> = {
     how: ["Φτιάξε δομή και πρόσθεσε τροφίμους.", "Στείλε στη δομή τη λίστα με όσα έρχονται.", "Τύπωσε ή στείλε το φύλλο οδηγιών λήψης.", "Καταχώρισε εισπράξεις και δες το εκκαθαριστικό."],
     how_en: ["Create a structure and add residents.", "Send the upcoming list to the structure.", "Print or send the intake instructions.", "Record receipts and check the statement."],
     manual: "🏠 Δομές φροντίδας",
+  },
+  "/cy/settlement": {
+    title: "Εκκαθάριση ΟΑΥ", title_en: "HIO settlement",
+    intro: "Η αμοιβή σου από τον ΟΑΥ και έλεγχος ότι πληρώθηκε κάθε εκτέλεση.",
+    intro_en: "Your HIO fee and a check that every dispensing was paid.",
+    logic: "Ανεβάζεις τα αρχεία πληρωμής του ΟΑΥ (PDF αμοιβής, PDF κατάστασης πληρωμής, Excel πληρωμένων και εκκρεμών απαιτήσεων). Κάθε εκτέλεση συγκρίνεται με το RxVision σε συσκευασίες, ποσό ΟΑΥ, συμμετοχή, PC2 και σύνολο. Δεν αποθηκεύονται ονόματα ή ταυτότητες πελατών.",
+    logic_en: "You upload the HIO payment files (fee PDF, remittance PDF, Excel of paid and pending claims). Every dispensing is compared with RxVision on packages, HIO amount, copay, PC2 and total. No customer names or IDs are stored.",
+    how: ["Πάτα «Ανέβασε αρχεία του μήνα» και διάλεξέ τα όλα μαζί.", "Δες αμοιβή, εφημερίες και διορθώσεις.", "Έλεγξε όσες πληρώθηκαν διαφορετικά ή λείπουν."],
+    how_en: ["Click «Upload the month's files» and select them all.", "See fee, duty nights and corrections.", "Check those paid differently or missing."],
+    manual: "🏦 Εκκαθάριση ΟΑΥ",
   },
   "/cy/claim": {
     title: "Μηνιαία απαίτηση ΟΑΥ", title_en: "Monthly HIO claim",

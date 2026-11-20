@@ -287,34 +287,53 @@ async def doctor(tenant_id: str, doctor_id: str, *, today: date | None = None) -
 CY_VAT = {"drug": 5.0, "consumable": 19.0}   # Κύπρος: φάρμακα 5%, αναλώσιμα 19% (όπως το PharmacyOne)
 
 
-async def profitability(tenant_id: str, date_from: date | None, date_to: date | None) -> dict[str, Any]:
-    """Κέρδος = έσοδα ΧΩΡΙΣ ΦΠΑ − χονδρική (ίδιος κανόνας με την Ελλάδα, services/vat.py).
+def _opened_pack(ln: dict) -> bool:
+    """Υποδιαίρεση: το ΓεΣΥ γράφει ρητά «ΣΥΣΚΕΥΑΣΙΑ ΠΟΥ ΑΝΟΙΓΕΙ» και η ποσότητα είναι σε ΤΕΜΑΧΙΑ (π.χ. αμπούλες),
+    όχι σε κουτιά. Η χονδρική της Αποθήκης είναι ανά κουτί και ο κατάλογος δεν λέει πόσα τεμάχια έχει →
+    ΚΑΝΕΝΑ κόστος (ποτέ εικασία). Ο ΟΑΥ το διορθώνει στην αμοιβή («Packages Subdivision»)."""
+    return "ΑΝΟΙΓΕΙ" in str(ln.get("package") or "").upper()
 
-    Έσοδα = σύνολο γραμμής (ΟΑΥ + πελάτης). Χονδρική = `wholesale_cents` της Αποθήκης × τεμάχια,
-    ταίριασμα με barcode. Το XML ΓεΣΥ δεν έχει χονδρική: όπου η Αποθήκη δεν την ξέρει, το είδος
-    μετρά στα έσοδα αλλά ΟΧΙ στο κέρδος, και το λέμε («κάλυψη»). Ποτέ εκτίμηση."""
+
+async def profitability(tenant_id: str, date_from: date | None, date_to: date | None) -> dict[str, Any]:
+    """Κερδοφορία ΓεΣΥ (20/11/2026) — ΤΡΙΑ κομμάτια, γιατί ο ΟΑΥ πληρώνει τα φάρμακα ΣΤΗ ΧΟΝΔΡΙΚΗ:
+
+    1. **Αμοιβή ΟΑΥ** = συσκευασίες × τιμή μονάδας του μήνα. ΑΚΡΙΒΗΣ για εκτελέσεις που βρίσκονται στις
+       «Πληρωμένες απαιτήσεις» ανεβασμένης εκκαθάρισης· για τις υπόλοιπες ΠΡΟΣΩΡΙΝΗ με την τελευταία γνωστή
+       τιμή μονάδας (απόφαση ιδιοκτήτη) — πάντα σημειωμένη. Χωρίς καμία εκκαθάριση → None (ποτέ εικασία).
+    2. **Εφημερίες & διορθώσεις** των μηνών πληρωμής της περιόδου (Κατάσταση πληρωμής).
+    3. **Διαφορά ΓεΣΥ − χονδρικής** ανά σκεύασμα = έσοδα ΧΩΡΙΣ ΦΠΑ − χονδρική Αποθήκης (`items`, `totals.profit`).
+       Για φάρμακα ≈ 0 εκ κατασκευής· ό,τι απομένει δείχνει είδη που ο ΟΑΥ πληρώνει κάτω/πάνω από την αγορά.
+       Υποδιαιρέσεις → χωρίς κόστος (βλ. `_opened_pack`)."""
     from app.services import vat
-    rows = await CyDispensingRepository(tenant_id=tenant_id).aggregate([
-        *([{"$match": window(date_from, date_to)}] if (date_from or date_to) else []),
-        {"$unwind": "$lines"}, {"$match": {"lines.qty_disp": {"$gt": 0}}},
-        {"$group": {"_id": {"$ifNull": ["$lines.barcode", "$lines.code"]},
-                    "barcode": {"$last": "$lines.barcode"}, "code": {"$last": "$lines.code"},
-                    "name": {"$last": "$lines.description"},
-                    "kind": {"$last": "$lines.kind"}, "units": {"$sum": "$lines.qty_disp"},
-                    "revenue": {"$sum": "$lines.amounts.total"}, "times": {"$sum": 1}}}])
+    from app.services.cy import settlement, warehouse
+    base = [{"$match": window(date_from, date_to)}] if (date_from or date_to) else []
+    repo = CyDispensingRepository(tenant_id=tenant_id)
+    raw = await repo.aggregate([*base, {"$unwind": "$lines"}, {"$match": {"lines.qty_disp": {"$gt": 0}}},
+                                {"$project": {"_id": 0, "ln": "$lines"}}])
+    groups: dict[str, dict[str, Any]] = {}
+    for r in raw:
+        ln = r["ln"]
+        opened = _opened_pack(ln)
+        key = f"{ln.get('barcode') or ln.get('code')}{'|opened' if opened else ''}"
+        g = groups.setdefault(key, {"_id": key, "barcode": ln.get("barcode"), "code": ln.get("code"), "opened": opened,
+                                    "units": 0, "revenue": 0, "times": 0})
+        g.update(name=ln.get("description"), kind=ln.get("kind"))
+        g["units"] += int(ln.get("qty_disp") or 0)
+        g["revenue"] += int(((ln.get("amounts") or {}).get("total")) or 0)
+        g["times"] += 1
+    rows = list(groups.values())
     # ΕΝΑΣ ορισμός ταιριάσματος με την Αποθήκη (barcode με/χωρίς 0, κωδικός ΓεΣΥ) — services/cy/warehouse.py
-    from app.services.cy import warehouse
     wh = await warehouse.lookup(tenant_id, rows, fields=("wholesale_cents", "vat_rate"))
     items, tot = [], {"revenue": 0, "revenue_net": 0, "covered_revenue_net": 0, "cost": 0, "profit": 0}
     for r in rows:
         p = wh.get(r.get("barcode"), r.get("code")) or {}
         pct = float(p["vat_rate"]) if p.get("vat_rate") is not None else CY_VAT.get(r.get("kind"), 5.0)
         net = round(vat.net(r["revenue"], pct))
-        cost = int(p.get("wholesale_cents") or 0) * r["units"] if p.get("wholesale_cents") else None
+        cost = int(p["wholesale_cents"]) * r["units"] if (p.get("wholesale_cents") and not r["opened"]) else None
         profit = net - cost if cost is not None else None
         items.append({"key": r["_id"], "barcode": r.get("barcode"), "name": r.get("name"), "kind": r.get("kind"),
-                      "units": r["units"], "times": r["times"], "revenue": r["revenue"], "revenue_net": net,
-                      "vat_pct": pct, "cost": cost, "profit": profit,
+                      "opened_pack": r["opened"], "units": r["units"], "times": r["times"], "revenue": r["revenue"],
+                      "revenue_net": net, "vat_pct": pct, "cost": cost, "profit": profit,
                       "margin_pct": round(100 * profit / net, 1) if profit is not None and net else None})
         tot["revenue"] += r["revenue"]
         tot["revenue_net"] += net
@@ -323,7 +342,45 @@ async def profitability(tenant_id: str, date_from: date | None, date_to: date | 
             tot["cost"] += cost
             tot["profit"] += profit
     items.sort(key=lambda i: (i["profit"] is None, -(i["profit"] or 0), -i["revenue"]))
+
+    # ── 1. Αμοιβή ΟΑΥ ανά εκτέλεση ──
+    book = await settlement.fee_book(tenant_id)
+    latest = book["latest"]
+    fee = {"packages": 0, "exact_packages": 0, "exact_cents": 0, "provisional_packages": 0, "provisional_cents": 0,
+           "no_fee_packages": 0, "price_cents": latest["price_cents"] if latest else None,
+           "price_month": latest["month"] if latest else None, "available": bool(latest)}
+    for d in await repo.aggregate([*base, {"$project": {"_id": 0, "dispensing_id": 1, "hio": "$totals.hio",
+                                                        "lines.qty_disp": 1}}]):
+        pk = settlement.packages_of(d)
+        if not pk:
+            continue
+        if not d.get("hio"):          # ο ΟΑΥ δεν δείχνει (ούτε αμείβει) απαιτήσεις με μηδενική αποζημίωση
+            fee["no_fee_packages"] += pk
+            continue
+        fee["packages"] += pk
+        price = book["paid"].get(d["dispensing_id"])
+        if price is not None:
+            fee["exact_packages"] += pk
+            fee["exact_cents"] += pk * price
+        elif latest:
+            fee["provisional_packages"] += pk
+            fee["provisional_cents"] += pk * latest["price_cents"]
+    fee["total_cents"] = (fee["exact_cents"] + fee["provisional_cents"]) if latest else None
+
+    # ── 2. Εφημερίες & διορθώσεις: μήνες ΠΛΗΡΩΜΗΣ μέσα στην περίοδο ──
+    lo = date_from.strftime("%Y-%m") if date_from else "0000-00"
+    hi = (date_to - timedelta(days=1)).strftime("%Y-%m") if date_to else "9999-99"
+    in_period = {m: v for m, v in book["months"].items() if lo <= m <= hi and v["has_remittance"]}
+    duty = sum(v["duty_cents"] for v in in_period.values())
+    corr = sum(v["corrections_cents"] for v in in_period.values())
+
+    covered = tot["covered_revenue_net"]
     return {"totals": {**tot,
-                       "margin_pct": round(100 * tot["profit"] / tot["covered_revenue_net"], 1) if tot["covered_revenue_net"] else None,
-                       "coverage_pct": round(100 * tot["covered_revenue_net"] / tot["revenue_net"]) if tot["revenue_net"] else 0},
-            "items": items, "missing_cost": sum(1 for i in items if i["cost"] is None)}
+                       "margin_pct": round(100 * tot["profit"] / covered, 1) if covered else None,
+                       # floor: «100%» ΜΟΝΟ όταν όντως όλα έχουν χονδρική (πριν: στρογγυλοποίηση έδειχνε 100% με 22 κενά)
+                       "coverage_pct": int(100 * covered / tot["revenue_net"]) if tot["revenue_net"] else 0,
+                       "total_profit": (fee["total_cents"] + duty + corr + tot["profit"]) if latest else None},
+            "fee": fee, "duty_cents": duty, "corrections_cents": corr,
+            "settlement_months": sorted(in_period),
+            "items": items, "missing_cost": sum(1 for i in items if i["cost"] is None),
+            "opened_packs": sum(1 for i in items if i["opened_pack"])}

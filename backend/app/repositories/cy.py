@@ -108,3 +108,14 @@ class CyLoanRepository(BaseRepository):
     """Προχορηγήσεις (δανεικά) Κύπρου: σκευάσματα που δόθηκαν ΠΡΙΝ από την εκτέλεση ΓεΣΥ.
     Ξεχωριστή συλλογή από την ελληνική (`advance_dispensings`), που στηρίζεται σε ΕΟΦ/ΗΔΥΚΑ."""
     collection_name = "cy_loans"
+
+
+class CySettlementRepository(BaseRepository):
+    """«Εκκαθάριση ΟΑΥ»: μία εγγραφή ανά φαρμακείο και μήνα πληρωμής («2026-10») — από τα αρχεία που
+    λαμβάνει ο φαρμακοποιός (services/cy/settlement.py). Χωρίς ονόματα/ταυτότητες: αριθμοί εκτέλεσης + ποσά."""
+    collection_name = "cy_settlements"
+
+
+async def find_all(repo: BaseRepository, query: dict, *, sort: list[tuple[str, int]] | None = None) -> list[dict]:
+    """Συντόμευση για το `BaseRepository.find_all` (ο ΕΝΑΣ ορισμός: όλα, χωρίς όριο σελίδας)."""
+    return await repo.find_all(query, sort=sort)

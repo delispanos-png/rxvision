@@ -125,17 +125,17 @@ async def export_subject(tenant_id: str, patient_id: str, *, actor_user_id: str 
 
     patient = await _repo(tenant_id, "patients_anonymized").find_one({"_id": oid})
     contact = await _repo(tenant_id, "patient_contacts").find_one({"_id": oid})
-    executions = await _repo(tenant_id, "prescription_executions").find(
-        {"patient_ref": oid}, sort=[("executed_at", -1)], limit=500)
+    # GDPR (άρθρο 15): η εξαγωγή πρέπει να είναι ΠΛΗΡΗΣ — find_all, όχι find (που κόβει στα 500)
+    executions = await _repo(tenant_id, "prescription_executions").find_all(
+        {"patient_ref": oid}, sort=[("executed_at", -1)])
     exec_ids = [_oid(e["_id"]) for e in executions if e.get("_id")]
     items = []
     if exec_ids:
-        items = await _repo(tenant_id, "prescription_items").find(
-            {"execution_id": {"$in": exec_ids}}, limit=500)
-    future = await _repo(tenant_id, "future_prescriptions").find({"patient_ref": oid}, limit=500)
+        items = await _repo(tenant_id, "prescription_items").find_all({"execution_id": {"$in": exec_ids}})
+    future = await _repo(tenant_id, "future_prescriptions").find_all({"patient_ref": oid})
     consents = await PatientConsentRepository(tenant_id=tenant_id).history(oid)
-    gdpr_events = await _repo(tenant_id, "audit_logs").find(
-        {"subject_id": str(oid), "category": "gdpr"}, sort=[("at", -1)], limit=500)
+    gdpr_events = await _repo(tenant_id, "audit_logs").find_all(
+        {"subject_id": str(oid), "category": "gdpr"}, sort=[("at", -1)])
 
     bundle = {
         "exported_at": datetime.now(tz=timezone.utc).isoformat(),

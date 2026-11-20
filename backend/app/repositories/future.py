@@ -287,7 +287,7 @@ class FuturePrescriptionRepository(BaseRepository):
             wh.collection_name = "pharmacy_products"
             barcodes = [str(d["barcode"]) for d in demand if d.get("barcode")]
             if barcodes:
-                for p in await wh.find({"barcode": {"$in": barcodes}}, limit=len(barcodes) + 10):
+                for p in await wh.find_all({"barcode": {"$in": barcodes}}):
                     whmap[p.get("barcode")] = p
         out = []
         for d in demand:

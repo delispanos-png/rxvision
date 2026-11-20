@@ -154,6 +154,43 @@ async def check_tenant(db, tid: str, now: datetime | None = None) -> list[Findin
     return [f for f in out if f]
 
 
+SPECIAL_REMIND_DAYS = 14
+
+
+async def _special_offer_findings(db, now: datetime) -> list[Finding]:
+    """Ειδικές προσφορές: τρία πράγματα που πρέπει να δει άνθρωπος.
+      · ανάκληση (το ΑΦΜ της ΗΔΥΚΑ δεν ταίριαξε ή δεν επιβεβαιώθηκε ποτέ) τις τελευταίες 2 ημέρες·
+      · δεύτερη πληρωμένη εγγραφή ίδιου ΑΦΜ (`special_conflict`): πλήρωσε με έκπτωση χωρίς δικαίωμα·
+      · εξαργύρωση χωρίς σύνδεση ΗΔΥΚΑ πάνω από 14 ημέρες (στις 30 ανακαλείται αυτόματα)."""
+    out: list[Finding] = []
+    recent = now - timedelta(days=2)
+    def _aware(d):
+        return d if d is None or d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+    revoked = [f"{r['promotion_id']}: {x.get('tenant_id')} ({x.get('reason')})"
+               async for r in db["special_offer_afms"].find({"rejections.at": {"$gte": recent}})
+               for x in r.get("rejections") or [] if (_aware(x.get("at")) or recent) >= recent]
+    if revoked:
+        out.append(Finding("special_offer_revoked",
+                           f"{len(revoked)} ειδικές προσφορές ανακλήθηκαν: το ΑΦΜ της ΗΔΥΚΑ δεν ταίριαξε ή δεν "
+                           "επιβεβαιώθηκε. Η τρέχουσα περίοδος είναι πληρωμένη με έκπτωση: αποφασίστε για τη διαφορά "
+                           "(adminpanel → Προωθητικές ενέργειες → ΑΦΜ)", len(revoked), len(revoked), sample=revoked))
+    conflicts = [f"{r['promotion_id']}: {r.get('tenant_id')}" async for r in db["promotion_redemptions"].find(
+        {"special_conflict": True, "at": {"$gte": now - timedelta(days=30)}})]
+    if conflicts:
+        out.append(Finding("special_offer_conflict",
+                           f"{len(conflicts)} εγγραφές πλήρωσαν με ειδική προσφορά που είχε ήδη χρησιμοποιηθεί από "
+                           "το ίδιο ΑΦΜ", len(conflicts), len(conflicts), sample=conflicts))
+    pending = [f"{r['promotion_id']}: {r.get('tenant_id')}" async for r in db["special_offer_afms"].find(
+        {"status": "redeemed", "redeemed_at": {"$lte": now - timedelta(days=SPECIAL_REMIND_DAYS)}})]
+    if pending:
+        out.append(Finding("special_offer_unverified",
+                           f"{len(pending)} φαρμακεία με ειδική προσφορά δεν έχουν συνδέσει ακόμη ΗΔΥΚΑ (πάνω από "
+                           f"{SPECIAL_REMIND_DAYS} ημέρες· στις 30 η προσφορά ανακαλείται)", len(pending), len(pending),
+                           sample=pending))
+    return out
+
+
 async def check_platform(db, now: datetime | None = None) -> list[Finding]:
     now = now or datetime.now(tz=timezone.utc)
     out: list[Finding | None] = []
@@ -188,6 +225,8 @@ async def check_platform(db, now: datetime | None = None) -> list[Finding]:
         out.append(Finding("promotion_gift_missing",
                            f"{len(missed)} δώρα προωθητικών ενεργειών δεν δόθηκαν (adminpanel → Προωθητικές ενέργειες)",
                            len(missed), len(missed)))
+    # ειδικές προσφορές ανά ΑΦΜ: ανακλήσεις, διπλές εξαργυρώσεις, εκκρεμείς επιβεβαιώσεις ΗΔΥΚΑ
+    out.extend(await _special_offer_findings(db, now))
     rows = await db["prescription_executions"].aggregate([   # tenant-ok: πλατφόρμα, ανά external_id
         {"$match": {"executed_at": {"$gte": since}}},
         {"$group": {"_id": "$external_id", "t": {"$addToSet": "$tenant_id"}}},

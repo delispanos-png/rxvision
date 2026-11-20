@@ -31,8 +31,9 @@ class EffectIn(BaseModel):
 
 
 class LockIn(BaseModel):
-    kind: Literal["none", "years", "until"] = "none"
+    kind: Literal["none", "years", "until", "months"] = "none"   # months: μόνο ειδική προσφορά (τίθεται από τον server)
     years: int | None = Field(None, ge=0, le=10)
+    months: int | None = Field(None, ge=0, le=36)
     until_on: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -52,6 +53,35 @@ class PromotionIn(BaseModel):
     effects: list[EffectIn] = Field(min_length=1, max_length=10)
     lock: LockIn = Field(default_factory=LockIn)
     show_on_site: bool = False
+    audience: Literal["all", "afm_list"] = "all"
+    offer_months: int | None = Field(None, ge=0, le=36)
+    payer: Literal["pharmacy", "sponsor", "split"] = "pharmacy"
+    sponsor_id: str | None = Field(None, max_length=40)
+    sponsor_pct: int | None = Field(None, ge=0, le=100)
+
+
+class SponsorIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    afm: str = Field(min_length=8, max_length=12)
+    doy: str = Field("", max_length=80)
+    address: str = Field("", max_length=160)
+    city: str = Field("", max_length=80)
+    postal_code: str = Field("", max_length=10)
+    email: str = Field("", max_length=160)
+    phone: str = Field("", max_length=40)
+    contact: str = Field("", max_length=120)
+    country: Literal["GR", "CY"] = "GR"
+    active: bool = True
+    notes: str = Field("", max_length=1000)
+
+
+class AfmsIn(BaseModel):
+    afms: str = Field(min_length=1, max_length=200_000)   # επικόλληση: ΑΦΜ (+ email) ανά γραμμή, ή με κόμμα
+
+
+class InviteIn(BaseModel):
+    resend: bool = False                                   # ξανά και σε όσους έχουν ήδη λάβει
+    afms: list[str] | None = Field(None, max_length=5000)  # μόνο αυτά (π.χ. ένα ΑΦΜ)
 
 
 class PreviewIn(BaseModel):
@@ -61,6 +91,7 @@ class PreviewIn(BaseModel):
     with_referral: bool = False
     promo_code: str | None = Field(None, max_length=24)
     on_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    listed_afm: bool = False          # «ΑΦΜ της λίστας»: δείχνει και τις ειδικές προσφορές
 
 
 def _err(exc: svc.PromotionError) -> HTTPException:
@@ -77,6 +108,8 @@ async def list_promotions(_: PlatformContext = Depends(get_platform_admin)):
                       "price_yearly": p.get("price_yearly")}
                      async for p in db["packages"].find({"trial_days": {"$in": [0, None]}}, {"name": 1, "price_monthly": 1, "price_yearly": 1})],
         "modules": [{"id": a["_id"], "name": a.get("name")} async for a in db["addons"].find({}, {"name": 1})],
+        "sponsors": [{"id": s["_id"], "name": s.get("name")}
+                     async for s in db["sponsors"].find({"active": {"$ne": False}}, {"name": 1}).sort("name", 1)],
     })
 
 
@@ -106,6 +139,91 @@ async def promotion_redemptions(pid: str, _: PlatformContext = Depends(get_platf
     return {"items": jsonable_encoder(await svc.redemptions(pid))}
 
 
+@admin_router.get("/promotions/{pid}/afms")
+async def special_afms(pid: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Η λίστα ΑΦΜ μιας ειδικής προσφοράς: ποιος την πήρε και ποιος όχι ακόμη."""
+    return {"items": jsonable_encoder(await svc.list_special_afms(pid))}
+
+
+@admin_router.post("/promotions/{pid}/afms")
+async def add_special_afms(pid: str, body: AfmsIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    try:
+        return await svc.add_special_afms(pid, body.afms, by=ctx.email)
+    except svc.PromotionError as exc:
+        raise _err(exc)
+
+
+@admin_router.post("/promotions/{pid}/invite")
+async def invite_special_afms(pid: str, body: InviteIn, _: PlatformContext = Depends(get_platform_admin)):
+    """Email πρόσκλησης στα ΑΦΜ της λίστας που δεν έχουν πάρει ακόμη την προσφορά."""
+    try:
+        return await svc.send_invitations(pid, resend=body.resend, only=body.afms)
+    except svc.PromotionError as exc:
+        raise _err(exc)
+
+
+@admin_router.delete("/promotions/{pid}/afms/{afm}")
+async def remove_special_afm(pid: str, afm: str, _: PlatformContext = Depends(get_platform_admin)):
+    try:
+        return await svc.remove_special_afm(pid, afm)
+    except svc.PromotionError as exc:
+        raise _err(exc)
+
+
+# ── Χορηγοί (Φάση 3) ─────────────────────────────────────────────────────────────────────
+def _sp_err(exc) -> HTTPException:
+    return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"error": str(exc)})
+
+
+@admin_router.get("/sponsors")
+async def list_sponsors(_: PlatformContext = Depends(get_platform_admin)):
+    from app.services import sponsors
+    return {"items": jsonable_encoder(await sponsors.list_all())}
+
+
+@admin_router.post("/sponsors", status_code=201)
+async def create_sponsor(body: SponsorIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    from app.services import sponsors
+    try:
+        return jsonable_encoder(await sponsors.save(body.model_dump(), by=ctx.email))
+    except sponsors.SponsorError as exc:
+        raise _sp_err(exc)
+
+
+@admin_router.put("/sponsors/{sid}")
+async def update_sponsor(sid: str, body: SponsorIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    from app.services import sponsors
+    try:
+        return jsonable_encoder(await sponsors.save(body.model_dump(), by=ctx.email, sid=sid))
+    except sponsors.SponsorError as exc:
+        raise _sp_err(exc)
+
+
+@admin_router.delete("/sponsors/{sid}")
+async def delete_sponsor(sid: str, _: PlatformContext = Depends(get_platform_admin)):
+    from app.services import sponsors
+    return await sponsors.delete(sid)
+
+
+@admin_router.get("/sponsors/{sid}/charges")
+async def sponsor_charges(sid: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Ενεργοποιήσεις που χρεώθηκαν στον χορηγό, με το παραστατικό και αν εξοφλήθηκε."""
+    from app.services import sponsors
+    return {"items": jsonable_encoder(await sponsors.charges(sid))}
+
+
+@admin_router.get("/sponsors/{sid}/report")
+async def sponsor_report(sid: str, _: PlatformContext = Depends(get_platform_admin)):
+    """Αναφορά CSV για να σταλεί στον χορηγό: μόνο τα ΑΦΜ της δικής του λίστας (ποτέ χρήση)."""
+    from app.services import sponsors
+    sp = await sponsors.get(sid)
+    if not sp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"error": "not_found"})
+    body = sponsors.report_csv(await sponsors.charges(sid), sp)
+    return Response(body, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="sponsor-{sid}.csv"'})
+
+
 @admin_router.post("/promotions/preview")
 async def preview(body: PreviewIn, _: PlatformContext = Depends(get_platform_admin)):
     """«Τι θα πάρει» ένας πελάτης σε μια ημερομηνία — για να ελεγχθεί ενέργεια πριν ξεκινήσει.
@@ -120,7 +238,8 @@ async def preview(body: PreviewIn, _: PlatformContext = Depends(get_platform_adm
         else datetime.now(tz=timezone.utc)
     promos = [{**p, "active": True, "_was_active": p.get("active")} for p in await svc.list_all()]
     ctx = {"package": body.package_code, "cycle": body.billing_cycle, "returning": body.returning,
-           "promo_code": body.promo_code, "referrer": "preview" if body.with_referral else None}
+           "promo_code": body.promo_code, "referrer": "preview" if body.with_referral else None,
+           "special_ids": {p["_id"] for p in promos if p.get("audience") == "afm_list"} if body.listed_afm else set()}
     res = svc.evaluate(promos, ctx, package_net=net, total_net=net, now=when)
     inactive = {p["_id"] for p in promos if not p["_was_active"]}
     for p in res["promotions"]:

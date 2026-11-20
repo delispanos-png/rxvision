@@ -136,9 +136,15 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
         return {"ok": False, "error": "package_not_found"}
     yearly = billing_cycle == "yearly"
     _sub0 = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {}
+    from app.services import promotions
+    _locked = promotions.offer_lock_blocks(_sub0, package_code)
+    if _locked:          # ειδική προσφορά σε ισχύ: ανανέωση μόνο στο ίδιο πακέτο
+        return {"ok": False, "error": "offer_locked", "package": _locked.get("package"),
+                "until": _locked.get("until")}
     amount = package_price(_sub0, pkg, billing_cycle, _now()) if _sub0.get("price_lock") \
         else int(pkg.get("price_yearly" if yearly else "price_monthly", 0) or 0)
-    if amount <= 0:
+    # Ειδική προσφορά όπου το πακέτο το πληρώνει ο χορηγός (ή είναι δωρεάν): πληρώνονται μόνο τα πρόσθετα
+    if amount <= 0 and not (promotions.offer_lock_active(_sub0) and package_code == (_sub0.get("offer_lock") or {}).get("package")):
         return {"ok": False, "error": "invalid_amount"}
     provider = await provider_for(tenant_id)
     from app.services import feedback_service
@@ -148,6 +154,8 @@ async def start_renewal(tenant_id: str, package_code: str, billing_cycle: str = 
     # ο πελάτης βλέπει πρώτα την ανάλυση και επιβεβαιώνει (το coupon αφορά μόνο το πακέτο)
     sub = await db["subscriptions"].find_one({"tenant_id": tenant_id}) or {"tenant_id": tenant_id}
     extras = await recurring_extras(db, sub, pkg, yearly)
+    if amount + extras["total"] <= 0:
+        return {"ok": False, "error": "nothing_to_pay"}     # η προσφορά ανοίγει μόνη της την περίοδο
     # καθαρό → χρεώσιμο ΜΕ ΦΠΑ (αν οι τιμές είναι καθαρές)
     from app.services.invoice_service import gross_from_price
     inc_vat = bool(pkg.get("price_includes_vat"))
@@ -653,6 +661,10 @@ async def bill_due() -> dict:
     if not await any_provider_configured():
         return {"skipped": "no_provider_configured"}
     now = _now()
+    # Ειδικές προσφορές υπαρχόντων πελατών που ξεκινούν τώρα: αλλαγή πακέτου/τιμής ΠΡΙΝ τη χρέωση,
+    # και άνοιγμα περιόδου χωρίς χρέωση όπου δεν υπάρχει τίποτα να πληρωθεί (promotions.start_due_offers)
+    from app.services import promotions
+    await promotions.start_due_offers(now)
     charged = failed = suspended = 0
     cur = db["subscriptions"].find({"$and": [  # tenant-ok: beat χρεώσεων — όλες οι συνδρομές
         {"status": {"$in": ["trial", "trialing", "active"]}},
@@ -762,6 +774,8 @@ async def expire_overdue() -> dict:
     της period από τον admin (π.χ. έγκριση κατάθεσης)."""
     db = shared_db()
     now = _now()
+    from app.services import promotions          # δωρεάν/χορηγός χωρίς κάρτα: νέα περίοδος, όχι περιθώριο
+    await promotions.start_due_offers(now)
     trial_grace, active_grace = await _grace_cfg()
     # δωρεάν πελάτες δεν χρεώνονται & δεν λήγουν ποτέ (χαρακτηρισμένοι στη συνδρομή)
     no_card = {"revolut_customer_id": None, "viva_transaction_id": None,
