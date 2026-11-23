@@ -41,6 +41,12 @@ function CyCampaignsInner() {
   const sp = useSearchParams();
   const [channel, setChannel] = useState(() => (["sms", "viber", "email", "push"].includes(sp.get("channel") ?? "") ? sp.get("channel")! : "sms"));
   const [segment, setSegment] = useState(() => sp.get("segment") || "all");
+  // από «Ομάδες πελατών»: ?audience=<κανόνες>&label=… → ΜΟΝΟ όσοι ταιριάζουν (services/cy/audience.py)
+  const [rules, setRules] = useState<{ conditions?: { field?: string }[] } | null>(() => {
+    try { const a = sp.get("audience"); return a ? JSON.parse(a) : null; } catch { return null; }
+  });
+  const rulesLabel = sp.get("label") || "";
+  const rulesCare = !!rules?.conditions?.some((c) => c.field === "therapy_atc");   // κλινικό πεδίο → μόνο φροντίδα
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -51,12 +57,14 @@ function CyCampaignsInner() {
   const [cpDays, setCpDays] = useState("30");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const segs = useQuery({ queryKey: ["cy", "camp", "segs"], queryFn: () => api<{ items: Seg[] }>("/cy/campaigns/segments") });
-  const aud = useQuery({ queryKey: ["cy", "camp", "aud", channel, segment],
-    queryFn: () => api<Aud>(`/cy/campaigns/audience?channel=${channel}&segment=${segment}`) });
+  const aud = useQuery({ queryKey: ["cy", "camp", "aud", channel, segment, rules ? JSON.stringify(rules) : ""],
+    queryFn: () => api<Aud>(rules
+      ? `/cy/campaigns/audience?channel=${channel}&rules=${encodeURIComponent(JSON.stringify(rules))}&purpose=${rulesCare ? "care" : "commercial"}`
+      : `/cy/campaigns/audience?channel=${channel}&segment=${segment}`) });
   const hist = useQuery({ queryKey: ["cy", "camp", "hist"], queryFn: () => api<{ items: Camp[] }>("/cy/campaigns") });
   const wallet = useQuery({ queryKey: ["comms", "wallet"], queryFn: () => api<{ balance_cents: number }>("/communications/wallet"), retry: false });
   const seg = segs.data?.items.find((s) => s.key === segment);
-  const care = !!seg?.clinical;
+  const care = rules ? rulesCare : !!seg?.clinical;
   const a = aud.data;
 
   async function send() {
@@ -68,7 +76,7 @@ function CyCampaignsInner() {
     setBusy(true); setMsg(null);
     try {
       const r = await api<{ recipients: number }>("/cy/campaigns", { method: "POST",
-        body: JSON.stringify({ channel, segment, purpose: care ? "care" : "commercial", subject: subject || null, message,
+        body: JSON.stringify({ channel, segment, rules: rules ?? undefined, purpose: care ? "care" : "commercial", subject: subject || null, message,
           coupon: cpOn && !care ? { discount_type: cpType, discount_value: cpType === "pct" ? Number(cpVal) : Math.round(Number(String(cpVal).replace(",", ".")) * 100),
             valid_days: Number(cpDays) || 30 } : null }) });
       setMsg({ ok: true, text: t(`Μπήκε στην ουρά για ${r.recipients} πελάτες. Η αποστολή γίνεται σε λίγα λεπτά.`, `Queued for ${r.recipients} customers. Sending takes a few minutes.`) });
@@ -105,11 +113,19 @@ function CyCampaignsInner() {
                   className={`rounded-full border px-3 py-1 text-sm ${channel === k ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300"}`}>{t(el, en)}</button>
               ))}
             </div>
+            {rules ? (
+              <div className="flex items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-sm dark:bg-brand-950/30">
+                <span className="text-xs text-slate-500">{t("Σε ποιους", "To whom")}:</span>
+                <b className="text-brand-700 dark:text-brand-300">{rulesLabel || t("Ομάδα πελατών", "Customer group")}</b>
+                <button type="button" onClick={() => setRules(null)} className="ml-auto text-xs text-slate-500 underline">{t("αλλαγή", "change")}</button>
+              </div>
+            ) : (
             <label className="block text-xs font-medium text-slate-500">{t("Σε ποιους", "To whom")}
               <select value={segment} onChange={(e) => setSegment(e.target.value)} className={`mt-1 ${inp}`}>
                 {(segs.data?.items ?? []).map((s) => <option key={s.key} value={s.key}>{t(s.label, s.label_en)}{s.clinical ? ` · ${t("φροντίδα", "care")}` : ""}</option>)}
               </select>
             </label>
+            )}
             {care && <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 dark:bg-sky-900/30 dark:text-sky-200">
               {t("Αυτό το κοινό βγαίνει από τις συνταγές τους (δεδομένα υγείας). Γράψε μήνυμα φροντίδας, π.χ. υπενθύμιση, όχι προσφορά.", "This audience comes from their prescriptions (health data). Write a care message, e.g. a reminder, not an offer.")}</p>}
             {(channel === "email" || channel === "push") && (

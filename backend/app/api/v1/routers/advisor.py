@@ -17,6 +17,11 @@ from app.repositories.advisor import AdvisorRepository, nutrition_html
 router = APIRouter()
 
 
+async def _is_cy(ctx: TenantContext) -> bool:
+    from app.services.cy.gate import tenant_country
+    return await tenant_country(ctx.tenant_id) == "CY"
+
+
 @router.get("/nutrition/{patient_id}")
 async def nutrition(
     patient_id: str,
@@ -132,6 +137,9 @@ async def business(
     date_to: datetime = Query(...),
     ctx: TenantContext = Depends(require("prescriptions:read", module="prescription_analytics")),
 ):
+    if await _is_cy(ctx):            # Κύπρος: ίδιο σχήμα, ορισμοί ΓεΣΥ (services/cy/advisor.py)
+        from app.services.cy import advisor as cy_advisor
+        return await cy_advisor.business(ctx.tenant_id, date_from, date_to, demo=ctx.demo)
     return await AdvisorRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).business(date_from, date_to)
 
 
@@ -177,6 +185,9 @@ async def orders(
     ctx: TenantContext = Depends(require("orders:read", module="order_suggestions")),
 ):
     """Ίδιος ορίζοντας με την οθόνη «Παραγγελίες» (ρύθμιση φαρμακείου, προεπιλογή 7 ημέρες)."""
+    if await _is_cy(ctx):            # Κύπρος: η ΙΔΙΑ πρόταση με την «Πρόταση παραγγελίας» (insights.reorder)
+        from app.services.cy import advisor as cy_advisor
+        return await cy_advisor.orders(ctx.tenant_id, lead_days=lead_days or 14, demo=ctx.demo)
     if not lead_days:
         from app.api.v1.routers.orders import order_horizon
         lead_days = await order_horizon(ctx.tenant_id)

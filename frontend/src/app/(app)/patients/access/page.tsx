@@ -17,6 +17,7 @@ import { api } from "@/lib/apiClient";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 
 type Hit = { patient_id: string; name: string | null; amka: string | null };
 type Auth = { id: string; name: string; at: string; note?: string };
@@ -38,6 +39,7 @@ export default function AccessPage() {
 }
 
 function Inner() {
+  const cy = useCountry() === "CY";   // Κύπρος: αναζήτηση με κωδικό ΟΑΥ (δεν υπάρχει ΑΜΚΑ)
   const t = useT();
   const qc = useQueryClient();
   const [term, setTerm] = useState("");
@@ -141,7 +143,7 @@ function Inner() {
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
           <input value={term} onChange={(e) => setTerm(e.target.value)}
-            placeholder={t("Ασφαλισμένος — όνομα ή ΑΜΚΑ…", "Patient — name or AMKA…")}
+            placeholder={cy ? t("Πελάτης — όνομα ή κωδικός ΟΑΥ…", "Customer — name or HIO code…") : t("Ασφαλισμένος — όνομα ή ΑΜΚΑ…", "Patient — name or AMKA…")}
             className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
         </div>
         {hits.length > 0 && (
@@ -181,7 +183,8 @@ function Inner() {
             <div className="p-8 text-center text-sm text-slate-400">{t("Φόρτωση…", "Loading…")}</div>
           ) : !all.data?.items.length ? (
             <div className="p-8 text-center text-sm text-slate-500">
-              {t("Καμία εξουσιοδότηση ακόμη. Βρες έναν ασφαλισμένο από πάνω για να καταχωρήσεις.",
+              {cy ? t("Καμία εξουσιοδότηση ακόμη. Βρες έναν πελάτη από πάνω για να καταχωρήσεις.", "No authorisations yet. Find a customer above to add one.")
+                : t("Καμία εξουσιοδότηση ακόμη. Βρες έναν ασφαλισμένο από πάνω για να καταχωρήσεις.",
                  "No authorisations yet. Find a patient above to add one.")}
             </div>
           ) : (
@@ -236,12 +239,13 @@ function Inner() {
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                 <input autoFocus value={gTerm} onChange={(e) => setGTerm(e.target.value)}
-                  placeholder={t("Όνομα ή ΑΜΚΑ…", "Name or AMKA…")}
+                  placeholder={cy ? t("Όνομα ή κωδικός ΟΑΥ…", "Name or HIO code…") : t("Όνομα ή ΑΜΚΑ…", "Name or AMKA…")}
                   className="w-full rounded-xl border border-slate-200 py-2 pl-9 pr-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
               </div>
               {gTerm.trim().length >= 2 && gHits.length === 0 && (
                 <p className="mt-2 text-xs text-slate-500">
-                  {t("Δεν βρέθηκε ασφαλισμένος. Πρέπει να υπάρχει ήδη στο φαρμακείο σου.",
+                  {cy ? t("Δεν βρέθηκε πελάτης. Για κάποιον χωρίς συνταγές, γράψ' τον πρώτα από «Πελάτες → Νέος πελάτης».", "No customer found. For someone without prescriptions, register them first under «Customers → New customer».")
+                    : t("Δεν βρέθηκε ασφαλισμένος. Πρέπει να υπάρχει ήδη στο φαρμακείο σου.",
                      "No patient found. They must already exist in your pharmacy.")}
                 </p>
               )}

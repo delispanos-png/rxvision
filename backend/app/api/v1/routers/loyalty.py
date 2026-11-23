@@ -13,6 +13,12 @@ _MODULE = "loyalty"          # opt-in module — ενεργοποιείται α
 _PERM = "portal:manage"
 
 
+async def _is_cy(ctx: TenantContext) -> bool:
+    """Κύπρος: υποψήφιοι/εγγραφή από τους πελάτες ΓεΣΥ (services/cy/portal.py) — ΕΝΑ σημείο επιλογής."""
+    from app.services.cy.gate import tenant_country
+    return await tenant_country(ctx.tenant_id) == "CY"
+
+
 @router.get("")
 async def overview(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     data = await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).overview()
@@ -31,6 +37,9 @@ async def member(patient_ref: str, ctx: TenantContext = Depends(require(_PERM, m
 # ── enrollment (opt-in) ────────────────────────────────────────────────────
 @router.get("/candidates")
 async def candidates(q: str = "", ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    if await _is_cy(ctx):
+        from app.services.cy import portal as cy_portal
+        return {"items": await cy_portal.loyalty_candidates(ctx.tenant_id, q, demo=ctx.demo)}
     return {"items": await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).candidates(q)}
 
 
@@ -43,6 +52,10 @@ class EnrollIn(BaseModel):
 
 @router.post("/enroll")
 async def enroll(body: EnrollIn, ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    if await _is_cy(ctx) and len(body.patient_ref) == 64:   # ψευδώνυμο ΓεΣΥ (όχι καρτέλα-γέφυρα ObjectId)
+        from app.services.cy import portal as cy_portal
+        return await cy_portal.loyalty_enroll(ctx.tenant_id, body.patient_ref, method=body.method,
+                                              referred_by_code=body.referred_by_code)
     return await LoyaltyRepository(tenant_id=ctx.tenant_id, demo=ctx.demo).enroll(
         body.patient_ref, method=body.method, name=body.name, referred_by_code=body.referred_by_code)
 

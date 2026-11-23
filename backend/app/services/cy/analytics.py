@@ -237,6 +237,19 @@ async def patients(tenant_id: str, *, date_from: date | None = None, date_to: da
                       "dob": p.get("dob"), "rx": r["rx"], "value": r["value"],
                       "beneficiary": r["beneficiary"], "last": r["last"],
                       "consumables": r["consumables"] > 0, "status": worst.get(r["_id"], "closed")})
+    # Πελάτες ΧΩΡΙΣ καμία εκτέλεση (εγγραφή από τον φαρμακοποιό: services/cy/portal.py::register) —
+    # αλλιώς δεν θα φαίνονταν πουθενά. Μπαίνουν στο τέλος, με 0 εκτελέσεις.
+    seen = {i["patient_ref"] for i in items}
+    q2: dict[str, Any] = {"source": "manual", "last_seen": {"$exists": False}, "erased": {"$ne": True}}
+    if q and q.strip():
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        q2["$or"] = [{"full_name": rx}, {"hio_code": rx}]
+    from app.repositories.cy import find_all
+    for p in await find_all(CyPatientRepository(tenant_id=tenant_id), q2, sort=[("created_at", -1)]):
+        if p["pseudo_id"] not in seen:
+            items.append({"patient_ref": p["pseudo_id"], "full_name": p.get("full_name"), "gender": p.get("gender"),
+                          "dob": p.get("dob"), "rx": 0, "value": 0, "beneficiary": 0, "last": None,
+                          "consumables": False, "status": "closed", "no_dispensings": True})
     return {"items": items, "total": len(items)}
 
 

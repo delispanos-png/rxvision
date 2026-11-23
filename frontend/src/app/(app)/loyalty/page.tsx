@@ -448,7 +448,7 @@ function EnrollCard({ cfg }: { cfg: Cfg }) {
         <div className="mt-2 max-h-56 space-y-1 overflow-y-auto">
           {items.map((cnd) => (
             <div key={cnd.patient_ref} className="flex items-center justify-between rounded-lg border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700">
-              <span className="text-slate-700 dark:text-slate-200">{cnd.name} <span className="text-xs text-slate-400">· {t("συνέπεια", "adherence")} {cnd.compliance ?? "—"}%</span></span>
+              <span className="text-slate-700 dark:text-slate-200">{cnd.name}{cnd.compliance != null && <span className="text-xs text-slate-400"> · {t("συνέπεια", "adherence")} {cnd.compliance}%</span>}</span>
               <button onClick={() => enroll.mutate(cnd.patient_ref)} className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700">{t("Εγγραφή (υπεγράφη)", "Enrol")}</button>
             </div>
           ))}

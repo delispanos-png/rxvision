@@ -7,8 +7,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Search } from "lucide-react";
+import { Download, Search, UserPlus } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { CyNewPatient } from "@/components/cy/CyNewPatient";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { QueryState } from "@/components/ui/QueryState";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
@@ -19,7 +20,7 @@ import { STATUS_STYLE, ageOf, type ChainStatus } from "@/lib/cy";
 import { useT } from "@/store/prefStore";
 
 type Row = { patient_ref: string; full_name: string | null; gender: string | null; dob: string | null; rx: number; value: number;
-  beneficiary: number; last: string; consumables: boolean; status: ChainStatus | "closed" };
+  beneficiary: number; last: string | null; consumables: boolean; status: ChainStatus | "closed"; no_dispensings?: boolean };
 
 export default function CyPatientsPage() {
   const t = useT();
@@ -27,19 +28,21 @@ export default function CyPatientsPage() {
   const { dateFrom, dateTo } = useUiStore();
   const [q, setQ] = useState("");
   const [term, setTerm] = useState("");
+  const [adding, setAdding] = useState(false);
   const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, limit: "1000", ...(term ? { q: term } : {}) }).toString();
   const list = useQuery({ queryKey: ["cy", "patients", qs], queryFn: () => api<{ items: Row[]; total: number }>(`/cy/patients?${qs}`) });
   const rows = list.data?.items ?? [];
 
   const cols: Column<Row>[] = [
-    { key: "full_name", header: t("Πελάτης", "Customer"), render: (r) => <span className="font-medium">{r.full_name || "—"}</span> },
+    { key: "full_name", header: t("Πελάτης", "Customer"), render: (r) => <span className="font-medium">{r.full_name || "—"}
+      {r.no_dispensings && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-normal text-slate-500 dark:bg-slate-800">{t("χωρίς συνταγές", "no prescriptions")}</span>}</span> },
     { key: "dob", header: t("Ηλικία", "Age"), hideOnMobile: true, render: (r) => {
       const a = ageOf(r.dob); return a != null ? `${a}${r.gender ? ` · ${r.gender === "F" ? t("Γ", "F") : t("Α", "M")}` : ""}` : "—"; },
       sortValue: (r) => ageOf(r.dob) ?? -1 },
     { key: "rx", header: t("Εκτελέσεις", "Dispensings"), align: "right", render: (r) => fmtNum(r.rx) },
     { key: "value", header: t("Αξία", "Value"), align: "right", render: (r) => <b>{fmtEur(r.value)}</b> },
     { key: "beneficiary", header: t("Πλήρωσε", "Paid"), align: "right", hideOnMobile: true, render: (r) => fmtEur(r.beneficiary) },
-    { key: "last", header: t("Τελευταία επίσκεψη", "Last visit"), hideOnMobile: true, render: (r) => fmtDate(r.last) },
+    { key: "last", header: t("Τελευταία επίσκεψη", "Last visit"), hideOnMobile: true, render: (r) => r.last ? fmtDate(r.last) : "—" },
     { key: "status", header: t("Συνταγές", "Prescriptions"), render: (r) => r.status === "closed"
       ? <span className="text-xs text-slate-400">{t("καμία ανοιχτή", "none open")}</span>
       : <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[r.status].cls}`}>{t(STATUS_STYLE[r.status].el, STATUS_STYLE[r.status].en)}</span>,
@@ -51,10 +54,16 @@ export default function CyPatientsPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">{t("Πελάτες", "Customers")}</h1>
-          <p className="mt-1 text-sm text-slate-500">{t("Οι πελάτες με εκτελέσεις ΓεΣΥ στην περίοδο. Κλικ για την Καρτέλα πελάτη.", "Customers with GHS dispensings in the period. Click to open the customer card.")}</p>
+          <p className="mt-1 text-sm text-slate-500">{t("Οι πελάτες με εκτελέσεις ΓεΣΥ στην περίοδο, και όσοι έγραψες χωρίς συνταγές. Κλικ για την Καρτέλα πελάτη.", "Customers with GHS dispensings in the period, plus those you registered without prescriptions. Click to open the customer card.")}</p>
         </div>
-        <DateRangeFilter />
+        <div className="flex items-end gap-2">
+          <button onClick={() => setAdding((v) => !v)} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-brand-300 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300">
+            <UserPlus className="h-4 w-4" /> {t("Νέος πελάτης", "New customer")}
+          </button>
+          <DateRangeFilter />
+        </div>
       </div>
+      {adding && <CyNewPatient onDone={(id) => router.push(`/cy/patients/${encodeURIComponent(id)}`)} onCancel={() => setAdding(false)} />}
       <div className="flex flex-wrap items-center gap-2">
         <form onSubmit={(e) => { e.preventDefault(); setTerm(q.trim()); }} className="flex items-center gap-2">
           <div className="relative">
@@ -72,7 +81,7 @@ export default function CyPatientsPage() {
             { key: "rx", header: t("Εκτελέσεις", "Dispensings") },
             { key: "value", header: t("Αξία (€)", "Value (€)"), value: (r: Row) => fmtMoney(r.value) },
             { key: "beneficiary", header: t("Πλήρωσε (€)", "Paid (€)"), value: (r: Row) => fmtMoney(r.beneficiary) },
-            { key: "last", header: t("Τελευταία επίσκεψη", "Last visit"), value: (r: Row) => fmtDate(r.last) },
+            { key: "last", header: t("Τελευταία επίσκεψη", "Last visit"), value: (r: Row) => (r.last ? fmtDate(r.last) : "") },
           ], rows)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200">
             <Download className="h-3.5 w-3.5" /> CSV

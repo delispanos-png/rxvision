@@ -198,7 +198,7 @@ const SEGMENTS: [string, string, string, string | null, string | null][] = [
   ["substance", "Με δραστική/ATC", "With substance/ATC", "ATC ή δραστική", "ATC or substance"],
 ];
 
-// Κύπρος: μόνο ΜΗ κλινικά κοινά (τα κλινικά → Marketing → Καμπάνιες, με μήνυμα φροντίδας)
+// Κύπρος: μόνο ΜΗ κλινικά κοινά (τα κλινικά → Marketing → Καμπάνιες → Νέα καμπάνια, με μήνυμα φροντίδας)
 const CY_SEGMENTS: [string, string, string, string | null, string | null][] = [
   ["all", "Όλοι οι πελάτες (με συγκατάθεση)", "All customers (consented)", null, null],
   ["recent", "Ήρθαν τις τελευταίες 90 ημέρες", "Visited in the last 90 days", null, null],

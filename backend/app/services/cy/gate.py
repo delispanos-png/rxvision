@@ -77,8 +77,46 @@ async def same_country(a: str, b: str) -> bool:
     return await tenant_country(a) == await tenant_country(b)
 
 
+# ── ΠΡΟΣΘΕΤΑ: ίδια συμπεριφορά με την Ελλάδα (23/11/2026) ────────────────────────────────────
+# Κάθε κυπριακή οθόνη ελέγχεται από το ΙΔΙΟ πρόσθετο με την αντίστοιχη ελληνική (ό,τι κλείνει ο admin
+# στο adminpanel κλείνει ΚΑΙ στην Κύπρο). Κλειδί = 1ο τμήμα της διαδρομής μετά το /cy. Λίστα = αρκεί ΕΝΑ
+# ενεργό (όπως οι «Ασφαλισμένοι» της Ελλάδας). Νέο endpoint ΧΩΡΙΣ γραμμή εδώ → αποτυγχάνει τεστ.
+_PATIENTS = ("patient_analytics", "advance_dispensing", "family_groups", "patient_portal")
+CY_ROUTE_MODULES: dict[str, tuple[str, ...]] = {
+    "overview": ("dashboard",), "dashboard": ("dashboard",), "staff": ("dashboard",),
+    "dispensings": ("prescription_analytics",), "not-dispensed": ("prescription_analytics",),
+    "recall": ("prescription_analytics",),
+    "claim": ("monthly_closing",), "settlement": ("monthly_closing",), "pc2": ("monthly_closing",),
+    "open-prescriptions": ("future_prescriptions",), "reorder": ("order_suggestions",),
+    "patients": _PATIENTS, "lost-customers": ("patient_analytics",), "consumables": ("patient_analytics",),
+    "campaigns": ("patient_analytics",),          # ίδιο με το ελληνικό «Καμπάνιες»
+    "doctors": ("doctor_analytics",), "profitability": ("profitability",), "loans": ("advance_dispensing",),
+}
+# Χωρίς πρόσθετο: η ΤΡΟΦΟΔΟΣΙΑ δεδομένων (όπως η σύνδεση ΗΔΥΚΑ στην Ελλάδα).
+CY_ROUTE_FREE = frozenset({"import", "pharmacyone"})
+
+
+def route_key(path: str) -> str:
+    rest = path.split("/cy/", 1)[1] if "/cy/" in path else ""
+    return rest.split("/", 1)[0]
+
+
+def _check_modules(ctx: TenantContext, path: str) -> None:
+    from app.core.deps import _module_locked
+    key = route_key(path)
+    if key in CY_ROUTE_FREE:
+        return
+    mods = CY_ROUTE_MODULES.get(key)
+    if mods is None:                           # άγνωστη κυπριακή διαδρομή: κλείνει (ποτέ σιωπηλά ανοιχτή)
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "module_locked", "module": key})
+    if all(_module_locked(ctx, m) for m in mods):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "module_locked", "module": mods[0]})
+
+
 async def require_cy(request: Request, ctx: TenantContext = Depends(get_current_context)) -> TenantContext:
     if not await cy_enabled() or await tenant_country(ctx.tenant_id) != "CY":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
+    if getattr(request, "url", None) is not None:
+        _check_modules(ctx, request.url.path)
     request.state.cy_demo = bool(getattr(ctx, "demo", False))     # «Λειτουργία παρουσίασης» → CyMaskedRoute κρύβει πρόσωπα
     return ctx

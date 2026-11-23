@@ -19,6 +19,12 @@ _MODULE = "patient_portal"
 _PERM = "portal:manage"
 
 
+async def _is_cy(ctx: TenantContext) -> bool:
+    """ΕΝΑ σημείο επιλογής χώρας για τους «Πελάτες πύλης» (Κύπρος: services/cy/portal.py)."""
+    from app.services.cy.gate import tenant_country
+    return await tenant_country(ctx.tenant_id) == "CY"
+
+
 class LocationIn(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lon: float = Field(..., ge=-180, le=180)
@@ -80,6 +86,9 @@ class ServiceIn(BaseModel):
 async def portal_customers(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
     """Adoption picture: how many of the pharmacy's patients are registered in the portal + how
     many remain to invite."""
+    if await _is_cy(ctx):
+        from app.services.cy import portal as cy_portal
+        return await cy_portal.customers(ctx.tenant_id, demo=ctx.demo)
     return await PatientAccountRepository().portal_customers(ctx.tenant_id, demo=ctx.demo)
 
 
@@ -99,6 +108,9 @@ async def resend_set_password(body: ResendSetPwIn,
     ident = (body.identifier or "").strip()
     if not ident:
         return {"ok": False, "error": "no_identifier"}
+    if await _is_cy(ctx):                     # Κύπρος: email ή κωδικός δικαιούχου ΟΑΥ
+        from app.services.cy import portal as cy_portal
+        return await cy_portal.resend(ctx.tenant_id, ident, by=ctx.user_id)
     db = shared_db()
     repo = PatientAccountRepository()
     digits = re.sub(r"\D", "", ident)
@@ -136,9 +148,15 @@ async def resend_set_password(body: ResendSetPwIn,
 
 class InviteIn(BaseModel):
     email: str
-    amka: str
+    amka: str | None = None             # Ελλάδα (υποχρεωτικό εκεί)
     last_name: str | None = None
     first_name: str | None = None
+    # Κύπρος: κωδικός δικαιούχου ΟΑΥ ή ταυτότητα/ARC (ή υπάρχων πελάτης από την αναζήτηση)
+    patient_id: str | None = Field(None, max_length=80)
+    hio_code: str | None = Field(None, max_length=20)
+    doc_type: str | None = Field(None, pattern="^(NID|ARC|PASSPORT)$")
+    doc_number: str | None = Field(None, max_length=20)
+    mobile: str | None = Field(None, max_length=30)
 
 
 @router.post("/portal-customers/invite")
@@ -149,6 +167,12 @@ async def invite_customer(body: InviteIn, ctx: TenantContext = Depends(require(_
     import re
 
     from app.services.patient_auth_service import PatientAuthService
+    if await _is_cy(ctx):
+        from app.services.cy import portal as cy_portal
+        return await cy_portal.invite(ctx.tenant_id, email=body.email, patient_id=body.patient_id,
+                                      hio_code=body.hio_code, doc_type=body.doc_type, doc_number=body.doc_number,
+                                      first_name=body.first_name, last_name=body.last_name, mobile=body.mobile,
+                                      by=ctx.user_id)
     amka = re.sub(r"\D", "", body.amka or "")
     if len(amka) != 11:
         return {"ok": False, "error": "bad_amka"}

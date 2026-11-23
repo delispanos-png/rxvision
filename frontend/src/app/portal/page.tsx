@@ -69,7 +69,7 @@ const DOW_EN = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const pdmy = (iso: string) => { const [y, m, d] = iso.split("-"); return d && m ? `${d}/${m}${y ? "/" + y.slice(2) : ""}` : iso; };
 const prange = (r: PRange) => (r.start_date === r.end_date ? pdmy(r.start_date) : `${pdmy(r.start_date)}–${pdmy(r.end_date)}`) + ` ${r.start}–${r.end}`;
 type Appt = { _id?: string; service_name: string; requested_at: string; status: string; tenant_id?: string; pharmacy_name?: string | null };
-type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null; is_fyk?: boolean; has_vaccine?: boolean };
+type Cda = { available?: boolean; found?: boolean; doctor?: string | null; medicines?: string[]; issue_date?: string | null; deadline_date?: string | null; intangible?: boolean; exec_count?: number | null; is_fyk?: boolean; has_vaccine?: boolean; repeat?: string | null; open_date?: string | null };
 type NutritionPlan = { has: boolean; note?: string | null; assigned_at?: string | null; sections?: NutritionSection[]; summary?: NutritionSummaryT | null };
 type NoPaperRx = { barcode: string; issue_date?: string | null; expiry_date?: string | null; status?: string | null; prescription_type?: string | null; executions?: string | null; already_submitted?: boolean };
 type RxReq = { _id?: string; kind: string; barcode?: string | null; note?: string | null; status: string; created_at: string; cda?: Cda | null; reply?: string | null; available_date?: string | null };
@@ -109,7 +109,8 @@ function videoEmbed(url?: string | null): string | null {
 const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"], ["cyrx", "Οι συνταγές μου", "My prescriptions"]] as const;
 // ΚΥΠΡΟΣ: μόνο ό,τι δεν είναι ελληνικό (ΗΔΥΚΑ/ΑΜΚΑ). Οι συνταγές έρχονται από το ΓεΣΥ (cyrx).
 // «meds» (Πρόγραμμα λήψης): η δοσολογία έρχεται από το XML ΓεΣΥ (services/cy/meds.py).
-const CY_TABS = new Set(["cyrx", "meds", "shop", "wallet", "availability", "appointments"]);
+// «health» (μετρήσεις/διατροφή στην καρτέλα πύλης) και «assign» (φωτογραφία ή αριθμός συνταγής ΓεΣΥ): 23/11/2026.
+const CY_TABS = new Set(["cyrx", "meds", "health", "shop", "wallet", "assign", "availability", "appointments"]);
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
 const NAV_SHORT: Record<string, [string, string]> = { shop: ["Κατάστημα", "Store"], meds: ["Πρόγραμμα", "Schedule"] };
 
@@ -735,7 +736,10 @@ export default function PortalHome() {
       const r = await patientApi<{ id: string; cda?: Cda }>("/patient/rx-request", { method: "POST", body: JSON.stringify({ barcode: assignBc.trim(), note: assignNote || undefined, for_ref: viewAs?.patient_ref, tenant_id: viewAs?.tenant_id }) });
       const c = r.cda;
       setAssignBc(""); setAssignNote("");
-      if (c?.found) setAssignMsg(t(`✓ Επιβεβαιώθηκε από ΗΔΙΚΑ${c.medicines?.length ? ` — ${c.medicines.length} φάρμακα` : ""} · στάλθηκε στο φαρμακείο`, `✓ Verified via ΗΔΙΚΑ${c.medicines?.length ? ` — ${c.medicines.length} medicines` : ""} · sent to the pharmacy`));
+      if (me?.country === "CY") setAssignMsg(c?.found
+        ? t(`✓ Βρέθηκε στις συνταγές σου${c.repeat ? ` (φάση ${c.repeat})` : ""} · στάλθηκε στο φαρμακείο`, `✓ Found in your prescriptions${c.repeat ? ` (step ${c.repeat})` : ""} · sent to the pharmacy`)
+        : t("Στάλθηκε ✓ — θα το ελέγξει το φαρμακείο", "Sent ✓ — the pharmacy will check it"));
+      else if (c?.found) setAssignMsg(t(`✓ Επιβεβαιώθηκε από ΗΔΙΚΑ${c.medicines?.length ? ` — ${c.medicines.length} φάρμακα` : ""} · στάλθηκε στο φαρμακείο`, `✓ Verified via ΗΔΙΚΑ${c.medicines?.length ? ` — ${c.medicines.length} medicines` : ""} · sent to the pharmacy`));
       else if (c?.available) setAssignMsg(t("Στάλθηκε ✓ — δεν εντοπίστηκε στην ΗΔΙΚΑ, θα το ελέγξει το φαρμακείο", "Sent ✓ — not found in ΗΔΙΚΑ, the pharmacy will check it"));
       else setAssignMsg(t("Στάλθηκε στο φαρμακείο ✓", "Sent to the pharmacy ✓"));
       reloadRxReqs();
@@ -1524,7 +1528,7 @@ export default function PortalHome() {
         </div>}
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
-        {["rx", "repeats", "renewals", "assign"].includes(tab) && viewable.length > 0 && (
+        {["rx", "repeats", "renewals", "assign", "cyrx"].includes(tab) && viewable.length > 0 && (
           <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-2xl border p-3 ${
             viewAs ? "border-sky-300 bg-sky-50 dark:bg-sky-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
             <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
@@ -2291,8 +2295,8 @@ export default function PortalHome() {
           <div className="space-y-4">
             {assignMsg && <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{assignMsg}</div>}
 
-            {/* 0) ΑΥΛΗ: φέρε τις νέες μου συνταγές από τη ΗΔΙΚΑ */}
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20 p-4 shadow-sm">
+            {/* 0) ΑΥΛΗ: φέρε τις νέες μου συνταγές από τη ΗΔΙΚΑ — ΟΧΙ στην Κύπρο (δεν υπάρχει ΗΔΥΚΑ) */}
+            {!isCy && <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20 p-4 shadow-sm">
               <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{t("✨ Έλεγχος για νέες συνταγές", "✨ Check for new prescriptions")}</h3>
               <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("Κατέβασε τις νέες συνταγές που σου έγραψε ο γιατρός σου και ανάθεσέ τες στο φαρμακείο.", "Download the new prescriptions your doctor issued and assign them to your pharmacy.")}</p>
               {npMsg && <div className="mb-3 rounded-lg bg-white/70 dark:bg-slate-900/50 px-3 py-2 text-xs text-slate-700 dark:text-slate-300">{npMsg}</div>}
@@ -2338,16 +2342,18 @@ export default function PortalHome() {
                     className="w-full rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">{t("Κλείσιμο", "Close")}</button>
                 </div>
               )}
-            </div>
+            </div>}
 
             {/* 1) με barcode */}
             <form onSubmit={submitBarcode} className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:border-slate-800 dark:bg-slate-900 p-4 shadow-sm">
-              <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{t("1) Με barcode συνταγής", "1) By prescription barcode")}</h3>
-              <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{t("Πληκτρολόγησε ή σκάναρε το barcode της συνταγής για να την αναθέσεις στο φαρμακείο.", "Type or scan the prescription barcode to assign it to the pharmacy.")}</p>
-              <input value={assignBc} onChange={(e) => setAssignBc(e.target.value)} placeholder={t("π.χ. 2602120442459", "e.g. 2602120442459")}
+              <h3 className="mb-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{isCy ? t("1) Με αριθμό συνταγής ΓεΣΥ", "1) By GHS prescription number") : t("1) Με barcode συνταγής", "1) By prescription barcode")}</h3>
+              <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{isCy
+                ? t("Γράψε τον αριθμό της συνταγής σου για να σου ετοιμάσει το φαρμακείο την επόμενη φάση.", "Enter your prescription number so the pharmacy can prepare the next supply.")
+                : t("Πληκτρολόγησε ή σκάναρε το barcode της συνταγής για να την αναθέσεις στο φαρμακείο.", "Type or scan the prescription barcode to assign it to the pharmacy.")}</p>
+              <input value={assignBc} onChange={(e) => setAssignBc(e.target.value)} placeholder={isCy ? t("π.χ. 83745312", "e.g. 83745312") : t("π.χ. 2602120442459", "e.g. 2602120442459")}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none" />
               <button type="submit" disabled={assignBusy || assignBc.trim().length < 4}
-                className="mt-3 w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">{t("Αποστολή barcode", "Send barcode")}</button>
+                className="mt-3 w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">{isCy ? t("Αποστολή", "Send") : t("Αποστολή barcode", "Send barcode")}</button>
             </form>
 
             {/* 2) φωτογραφία συνταγής ιατρού */}
@@ -2469,7 +2475,7 @@ export default function PortalHome() {
         )}
 
         {/* ── APPOINTMENTS ───────────────────────────────────── */}
-        {tab === "cyrx" && isCy && <CyPrescriptions />}
+        {tab === "cyrx" && isCy && <CyPrescriptions forRef={viewAs?.patient_ref} />}
         {tab === "appointments" && (
           <div className="space-y-4">
             <CalendarSyncCard feedPath={calFeed}

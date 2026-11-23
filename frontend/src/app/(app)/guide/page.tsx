@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { BookOpen, Search, ChevronDown } from "lucide-react";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
+import { helpFor } from "@/lib/help";
+import { CY_NAV_GROUPS } from "@/components/layout/navCatalog";
 
 type Loc = { el: string; en: string };
 type Item = { kpi: Loc; what: Loc; how: Loc };
@@ -64,13 +67,34 @@ const GROUPS: Group[] = [
   },
 ];
 
+/** Κύπρος (23/11/2026): ΚΑΝΕΝΑ δεύτερο αντίγραφο ορισμών — ο οδηγός χτίζεται από τη βοήθεια της Κύπρου
+ *  (`helpFor(path, "CY")`: «τι δείχνει» = intro, «πώς υπολογίζεται» = logic), με τις ομάδες του κυπριακού μενού.
+ *  Ό,τι αλλάζει στη βοήθεια μιας οθόνης αλλάζει αυτόματα και εδώ. */
+function cyGroups(): Group[] {
+  const seen = new Set<string>();
+  return CY_NAV_GROUPS.map((g) => {
+    const hrefs = g.items.flatMap((n) => [n.href, ...(n.children ?? []).map((c) => c.href)]).filter((h): h is string => !!h);
+    const items: Item[] = [];
+    for (const h of hrefs) {
+      const hp = helpFor(h.split("#")[0], "CY");
+      if (!hp?.logic || seen.has(hp.title)) continue;
+      seen.add(hp.title);
+      items.push({ kpi: { el: hp.title, en: hp.title_en ?? hp.title }, what: { el: hp.intro, en: hp.intro_en ?? hp.intro },
+        how: { el: hp.logic, en: hp.logic_en ?? hp.logic } });
+    }
+    return { title: { el: g.title, en: g.en }, emoji: "📌", items };
+  }).filter((g) => g.items.length);
+}
+
 export default function GuidePage() {
   const t = useT();
+  const cy = useCountry() === "CY";
+  const SRC = cy ? cyGroups() : GROUPS;
   const [q, setQ] = useState("");
-  const [open, setOpen] = useState<string | null>(GROUPS[0].title.el);
+  const [open, setOpen] = useState<string | null>(null);
   const s = q.trim().toLowerCase();
   const searchable = (i: Item) => (i.kpi.el + i.what.el + i.how.el + i.kpi.en + i.what.en + i.how.en).toLowerCase();
-  const groups = GROUPS.map((g) => ({ ...g, items: s ? g.items.filter((i) => searchable(i).includes(s)) : g.items })).filter((g) => g.items.length);
+  const groups = SRC.map((g) => ({ ...g, items: s ? g.items.filter((i) => searchable(i).includes(s)) : g.items })).filter((g) => g.items.length);
 
   return (
     <div className="w-full">
@@ -90,10 +114,11 @@ export default function GuidePage() {
 
       <div className="grid items-start gap-3 lg:grid-cols-2 2xl:grid-cols-3">
         {groups.map((g) => {
-          const expanded = !!s || open === g.title.el;
+          const cur = open ?? groups[0]?.title.el;      // αρχικά ανοιχτή η πρώτη ομάδα
+          const expanded = !!s || cur === g.title.el;
           return (
             <div key={g.title.el} className="rx-card overflow-hidden">
-              <button onClick={() => setOpen(open === g.title.el ? null : g.title.el)} className="flex w-full items-center justify-between px-4 py-3 text-left">
+              <button onClick={() => setOpen(cur === g.title.el ? "" : g.title.el)} className="flex w-full items-center justify-between px-4 py-3 text-left">
                 <span className="font-semibold text-slate-800 dark:text-slate-200">{g.emoji} {t(g.title.el, g.title.en)}</span>
                 <ChevronDown className={`h-4 w-4 text-slate-400 transition ${expanded ? "rotate-180" : ""}`} />
               </button>

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles, PackageSearch, Boxes, Wallet, TrendingUp } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { fmtNum, fmtEur, fmtDate, fmtMoney} from "@/lib/formatters";
 import { KpiCard } from "@/components/kpi/KpiCard";
@@ -52,6 +53,8 @@ const makeUpcCols = (t: T): Column<Upc>[] => [
 ];
 
 export default function OrderAdvisorPage() {
+  // Κύπρος: ίδια πρόταση με την «Πρόταση παραγγελίας» (services/cy/advisor.py) — χωρίς «ακριβαίνουν»/παραφάρμακα
+  const cy = useCountry() === "CY";
   const t = useT();
   const sugCols = makeSugCols(t);
   const upcCols = makeUpcCols(t);
@@ -74,7 +77,10 @@ export default function OrderAdvisorPage() {
         </div>
         <h1 className="mt-1.5 flex items-center gap-2 text-2xl font-bold tracking-tight"><Sparkles className="h-6 w-6" /> {t("Σύμβουλος Παραγγελίας", "Order Advisor")}</h1>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/90">
-          {data ? (t("el", "en") === "en"
+          {data ? (cy
+            ? t(`Από τις ανοιχτές συνταγές των πελατών σου: ${fmtNum(k?.items ?? 0)} σκευάσματα προς παραγγελία για τις επόμενες ημέρες, με κόστος στον φθηνότερο διαθέσιμο προμηθευτή.`,
+                `From your customers' open prescriptions: ${fmtNum(k?.items ?? 0)} products to order for the coming days, costed at the cheapest available supplier.`)
+            : t("el", "en") === "en"
             ? <>I estimated demand from recurring prescriptions & trends: <b>{fmtNum(k?.items ?? 0)}</b> products to order, <b>{fmtNum(k?.rising ?? 0)}</b> rising in price, and <b>{data.cross_sell?.length ?? 0}</b> OTC categories to stock.</>
             : <>Υπολόγισα τη ζήτηση από επαναλαμβανόμενες συνταγές & τάσεις: <b>{fmtNum(k?.items ?? 0)}</b> σκευάσματα προς παραγγελία, <b>{fmtNum(k?.rising ?? 0)}</b> που ακριβαίνουν, και <b>{data.cross_sell?.length ?? 0}</b> κατηγορίες παραφαρμάκου για στοκ.</>
           ) : t("Υπολογίζω την επερχόμενη ζήτηση…", "Estimating upcoming demand…")}
@@ -82,11 +88,11 @@ export default function OrderAdvisorPage() {
       </div>
 
       {k && (
-        <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className={`mb-5 grid grid-cols-2 gap-3 ${cy ? "md:grid-cols-3" : "md:grid-cols-4"}`}>
           <KpiCard label={t("Προτεινόμενα είδη", "Suggested items")} help={t("Είδη που προτείνονται για παραγγελία βάσει εκτελέσεων/πρόβλεψης.", "Items suggested for ordering.")} value={fmtNum(k.items)} sub={t("σκευάσματα", "products")} icon={PackageSearch} accent="indigo" />
           <KpiCard label={t("Συνολική ποσότητα", "Total quantity")} help={t("Συνολική ποσότητα τεμαχίων.", "Total quantity of units.")} value={fmtNum(k.qty)} sub={t("τεμάχια", "units")} icon={Boxes} accent="violet" />
           <KpiCard label={t("Εκτ. κόστος", "Est. cost")} help={t("Εκτιμώμενο κόστος χονδρικής της πρότασης παραγγελίας.", "Estimated wholesale cost of the order.")} value={fmtEur(k.cost)} sub={t("σύνολο πρότασης", "suggestion total")} icon={Wallet} accent="amber" />
-          <KpiCard label={t("Ακριβαίνουν", "Rising in price")} help={t("Είδη με ανοδική τιμή χονδρικής.", "Items with rising wholesale price.")} value={fmtNum(k.rising)} sub={t("παράγγειλε νωρίς", "order early")} icon={TrendingUp} accent="rose" />
+          {!cy && <KpiCard label={t("Ακριβαίνουν", "Rising in price")} help={t("Είδη με ανοδική τιμή χονδρικής.", "Items with rising wholesale price.")} value={fmtNum(k.rising)} sub={t("παράγγειλε νωρίς", "order early")} icon={TrendingUp} accent="rose" />}
         </div>
       )}
 

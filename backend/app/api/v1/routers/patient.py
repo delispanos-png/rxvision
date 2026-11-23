@@ -1374,8 +1374,13 @@ async def rx_request_barcode(body: RxRequestIn, ctx: PatientContext = Depends(ge
             {"tenant_id": target, "_id": ObjectId(str(pref))}, {"full_name": 1, "phone": 1})
         name = (who or {}).get("full_name") or name
         phone = (who or {}).get("phone") or phone
-    # live ΗΔΥΚΑ check via the pharmacy's own connection — verify + enrich the barcode
-    cda = await lookup_prescription(target, bc)
+    # live ΗΔΥΚΑ check via the pharmacy's own connection — verify + enrich the barcode.
+    # Κύπρος: ΟΧΙ ΗΔΥΚΑ — ο αριθμός συνταγής ΓεΣΥ ελέγχεται στις συνταγές ΤΟΥ ΙΔΙΟΥ του πελάτη.
+    if await _is_cy(ctx):
+        from app.services.cy import portal as cy_portal
+        cda = await cy_portal.rx_snapshot(target, pref, bc)
+    else:
+        cda = await lookup_prescription(target, bc)
     rid = await RxRequestRepository(tenant_id=target).create(
         account_id=ctx.account_id, patient_ref=pref, patient_name=name, patient_phone=phone,
         kind="barcode", barcode=bc, note=body.note, cda=cda)
@@ -1576,7 +1581,8 @@ async def loyalty_cancel_request(body: LoyaltyCancelIn, ctx: PatientContext = De
 # ── Κύπρος: «Οι συνταγές μου (ΓεΣΥ)» ─────────────────────────────────────────
 
 @router.get("/cy/prescriptions")
-async def cy_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
+async def cy_prescriptions(for_ref: str | None = Query(None, alias="for"),
+                           ctx: PatientContext = Depends(get_patient_context)):
     """Οι εκτελέσεις ΓεΣΥ του πελάτη σε ΑΥΤΟ το φαρμακείο + ανοιχτές συνταγές με επόμενη επίσκεψη.
     Ίδιος ορισμός αλυσίδων με την πλευρά του φαρμακείου (services/cy/chains.py). Ελληνικός
     λογαριασμός → 404 (ποτέ 403: η πύλη το ερμηνεύει ως αποσύνδεση)."""
@@ -1586,7 +1592,9 @@ async def cy_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
     repo = PatientAccountRepository()
     if not await _is_cy(ctx) or not await cy_enabled():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_available")
-    pseudo = await repo.cy_pseudo_of(ctx.tenant_id, ctx.patient_ref)
+    # «Προβολή ως» (γονική μέριμνα / εξουσιοδότηση): ο έλεγχος γίνεται ΠΑΝΤΑ στο `_view_target`
+    _, pref, _ = await _view_target(ctx, for_ref)
+    pseudo = await repo.cy_pseudo_of(ctx.tenant_id, pref)
     if not pseudo:
         return {"open": [], "history": []}
     cs = await chains.chains(ctx.tenant_id, match={"patient_ref": pseudo})

@@ -11,9 +11,10 @@ import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { InsightCard, type Insight } from "@/components/advisor/InsightCard";
 import { CrossSellCard } from "@/components/advisor/CrossSellCard";
 import { RecallSection } from "@/components/advisor/RecallSection";
+import { useCountry } from "@/lib/cy";
 
-type Kpi = { value: number; delta: number | null };
-type Cat = { code: string; name: string; revenue: number; gross_profit: number; margin_pct: number; units: number; rx: number; share_pct: number; trend_pct: number | null; verdict: string };
+type Kpi = { value: number | null; delta: number | null };   // Κύπρος: κέρδος/περιθώριο null χωρίς εκκαθάριση ΟΑΥ
+type Cat = { code: string; name: string; revenue: number; gross_profit: number | null; margin_pct: number | null; units: number; rx: number; share_pct: number; trend_pct: number | null; verdict: string | null };
 type Xsell = { atc: string; class: string; sell: string; why: string; reach: number };
 type Business = {
   period: { from: string; to: string };
@@ -30,8 +31,8 @@ const makeVerdict = (t: T): Record<string, { label: string; cls: string }> => ({
   divest: { label: t("🔴 Μη επενδύεις", "🔴 Divest"), cls: "bg-rose-100 text-rose-700" },
 });
 
-const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
-const num = (n: number) => new Intl.NumberFormat("el-GR").format(n || 0);
+const eur = (c: number | null) => c == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
+const num = (n: number | null) => new Intl.NumberFormat("el-GR").format(n || 0);
 
 function Delta({ delta, invert = false }: { delta: number | null; invert?: boolean }) {
   if (delta == null) return null;
@@ -59,6 +60,8 @@ function KpiTile({ label, value, delta, invert, sub }: { label: string; value: s
 
 export default function BusinessAdvisorPage() {
   const t = useT();
+  // Κύπρος (23/11/2026): ίδια οθόνη, ορισμοί ΓεΣΥ (services/cy/advisor.py) — κέρδος = αμοιβή ΟΑΥ κ.λπ.
+  const cy = useCountry() === "CY";
   const VERDICT = makeVerdict(t);
   const vsPrev = t("vs προηγ. ίση περίοδος", "vs prev. equal period");
   const filters = useUiStore();
@@ -80,7 +83,10 @@ export default function BusinessAdvisorPage() {
         </div>
         <h1 className="mt-1.5 flex items-center gap-2 text-2xl font-bold tracking-tight"><Sparkles className="h-6 w-6" /> {t("Σύμβουλος Επιχείρησης", "Business Advisor")}</h1>
         <p className="mt-2 max-w-3xl text-sm leading-relaxed text-white/90">
-          {data ? (t("el", "en") === "en"
+          {data ? (cy
+            ? t(`Σάρωσα ${num(k?.rx.value ?? 0)} εκτελέσεις ΓεΣΥ και ${num(k?.patients.value ?? 0)} πελάτες σε ${data.categories.length} θεραπευτικές κατηγορίες. Εντόπισα ${ins.length} προτεραιότητες για σένα.`,
+                `I scanned ${num(k?.rx.value ?? 0)} GHS dispensings and ${num(k?.patients.value ?? 0)} customers across ${data.categories.length} therapeutic categories. I found ${ins.length} priorities for you.`)
+            : t("el", "en") === "en"
             ? <>I scanned <b>{num(k?.rx.value ?? 0)}</b> prescriptions & <b>{num(k?.patients.value ?? 0)}</b> patients across <b>{data.categories.length}</b> therapeutic categories. I found <b>{ins.length}</b> priorities and <b>{data.cross_sell.length}</b> cross-sell opportunities for you.</>
             : <>Σάρωσα <b>{num(k?.rx.value ?? 0)}</b> συνταγές & <b>{num(k?.patients.value ?? 0)}</b> ασθενείς σε <b>{data.categories.length}</b> θεραπευτικές κατηγορίες. Εντόπισα <b>{ins.length}</b> προτεραιότητες και <b>{data.cross_sell.length}</b> ευκαιρίες συνοδευτικής πώλησης για σένα.</>
           ) : t("Επεξεργάζομαι τα δεδομένα του φαρμακείου σου…", "Processing your pharmacy's data…")}
@@ -90,16 +96,16 @@ export default function BusinessAdvisorPage() {
 
       {k && (
         <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-          <KpiTile sub={vsPrev} label={t("Έσοδα", "Revenue")} value={eur(k.revenue.value)} delta={k.revenue.delta} />
-          <KpiTile sub={vsPrev} label={t("Μεικτό κέρδος", "Gross profit")} value={eur(k.gross_profit.value)} delta={k.gross_profit.delta} />
-          <KpiTile sub={vsPrev} label={t("Περιθώριο", "Margin")} value={`${fmtDec(k.margin_pct.value || 0, 1)}%`} delta={k.margin_pct.delta} />
-          <KpiTile sub={vsPrev} label={t("Συνταγές", "Prescriptions")} value={num(k.rx.value)} delta={k.rx.delta} />
-          <KpiTile sub={vsPrev} label={t("Αιτούμενα", "Claimed")} value={eur(k.claimed.value)} delta={k.claimed.delta} />
-          <KpiTile sub={vsPrev} label={t("Ασθενείς", "Patients")} value={num(k.patients.value)} delta={k.patients.delta} />
+          <KpiTile sub={vsPrev} label={cy ? t("Αξία εκτελέσεων", "Dispensing value") : t("Έσοδα", "Revenue")} value={eur(k.revenue.value)} delta={k.revenue.delta} />
+          <KpiTile sub={cy && k.gross_profit.value == null ? t("θέλει εκκαθάριση ΟΑΥ", "needs the HIO settlement") : vsPrev} label={cy ? t("Κέρδος", "Profit") : t("Μεικτό κέρδος", "Gross profit")} value={eur(k.gross_profit.value)} delta={k.gross_profit.delta} />
+          <KpiTile sub={vsPrev} label={t("Περιθώριο", "Margin")} value={k.margin_pct.value == null ? "—" : `${fmtDec(k.margin_pct.value, 1)}%`} delta={k.margin_pct.delta} />
+          <KpiTile sub={vsPrev} label={cy ? t("Εκτελέσεις", "Dispensings") : t("Συνταγές", "Prescriptions")} value={num(k.rx.value)} delta={k.rx.delta} />
+          <KpiTile sub={vsPrev} label={cy ? t("Απαίτηση ΟΑΥ", "HIO claim") : t("Αιτούμενα", "Claimed")} value={eur(k.claimed.value)} delta={k.claimed.delta} />
+          <KpiTile sub={vsPrev} label={cy ? t("Πελάτες", "Customers") : t("Ασθενείς", "Patients")} value={num(k.patients.value)} delta={k.patients.delta} />
         </div>
       )}
 
-      <div className="mb-6"><RecallSection /></div>
+      {!cy && <div className="mb-6"><RecallSection /></div>}
 
       <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{t("Προτεραιότητες & προτάσεις", "Priorities & suggestions")}</h2>
       {isLoading ? (
@@ -115,11 +121,11 @@ export default function BusinessAdvisorPage() {
       {/* therapeutic-category turnover & verdict */}
       {(data?.categories?.length ?? 0) > 0 && (
         <div className="mt-6">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{t("Θεραπευτικές κατηγορίες — πού να εστιάσεις", "Therapeutic categories — where to focus")}</h2>
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{cy ? t("Θεραπευτικές κατηγορίες — αξία και τάση", "Therapeutic categories — value and trend") : t("Θεραπευτικές κατηγορίες — πού να εστιάσεις", "Therapeutic categories — where to focus")}</h2>
           <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-card">
             <table className="min-w-full divide-y divide-slate-200 text-sm">
               <thead className="bg-slate-50 text-left text-xs text-slate-500">
-                <tr><th className="px-4 py-3">{t("Κατηγορία (ATC)", "Category (ATC)")}</th><th className="px-4 py-3 text-right">{t("Τζίρος", "Turnover")}</th><th className="px-4 py-3 text-right">{t("Μερίδιο", "Share")}</th><th className="px-4 py-3 text-right">{t("Περιθώριο", "Margin")}</th><th className="px-4 py-3 text-right">{t("Τάση", "Trend")}</th><th className="px-4 py-3">{t("Ετυμηγορία", "Verdict")}</th></tr>
+                <tr><th className="px-4 py-3">{t("Κατηγορία (ATC)", "Category (ATC)")}</th><th className="px-4 py-3 text-right">{t("Τζίρος", "Turnover")}</th><th className="px-4 py-3 text-right">{t("Μερίδιο", "Share")}</th>{!cy && <th className="px-4 py-3 text-right">{t("Περιθώριο", "Margin")}</th>}<th className="px-4 py-3 text-right">{t("Τάση", "Trend")}</th>{!cy && <th className="px-4 py-3">{t("Ετυμηγορία", "Verdict")}</th>}</tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data!.categories.map((c) => (
@@ -127,9 +133,9 @@ export default function BusinessAdvisorPage() {
                     <td className="px-4 py-3 font-medium text-slate-800">{c.name} <span className="text-[10px] text-slate-400">{c.code}</span></td>
                     <td className="px-4 py-3 text-right">{eur(c.revenue)}</td>
                     <td className="px-4 py-3 text-right text-slate-500">{fmtDec(c.share_pct, 0)}%</td>
-                    <td className="px-4 py-3 text-right">{fmtDec(c.margin_pct, 0)}%</td>
+                    {!cy && <td className="px-4 py-3 text-right">{c.margin_pct == null ? "—" : `${fmtDec(c.margin_pct, 0)}%`}</td>}
                     <td className={`px-4 py-3 text-right font-medium ${(c.trend_pct ?? 0) >= 0 ? "text-emerald-600" : "text-rose-600"}`}>{c.trend_pct == null ? "—" : `${c.trend_pct >= 0 ? "+" : ""}${fmtDec(c.trend_pct, 0)}%`}</td>
-                    <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${VERDICT[c.verdict]?.cls}`}>{VERDICT[c.verdict]?.label}</span></td>
+                    {!cy && <td className="px-4 py-3">{c.verdict && <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${VERDICT[c.verdict]?.cls}`}>{VERDICT[c.verdict]?.label}</span>}</td>}
                   </tr>
                 ))}
               </tbody>

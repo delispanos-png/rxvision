@@ -259,8 +259,13 @@ async def send_campaign(body: CampaignIn, ctx: TenantContext = Depends(require("
 # ── Audience Engine (Φάση 2) ─────────────────────────────────────────────────────────────────
 @router.get("/audience/fields")
 async def audience_fields(_: TenantContext = Depends(require("portal:manage", module=_MODULE))):
-    """Τα πεδία πάνω στα οποία χτίζεται κανόνας, με ελληνικά ονόματα και σήμανση κλινικών."""
+    """Τα πεδία πάνω στα οποία χτίζεται κανόνας, με ελληνικά ονόματα και σήμανση κλινικών.
+    Κύπρος: χωρίς ό,τι δεν υπάρχει στο ΓεΣΥ (ICD-10, περιοχή, κύκλος ζωής ΗΔΥΚΑ) — services/cy/audience.py."""
     from app.services import audience
+    from app.services.cy.gate import tenant_country
+    if await tenant_country(_.tenant_id) == "CY":
+        from app.services.cy import audience as cy_audience
+        return {"fields": cy_audience.fields(), "operators": list(audience.OPS)}
     return {"fields": audience.FIELDS, "operators": list(audience.OPS)}
 
 

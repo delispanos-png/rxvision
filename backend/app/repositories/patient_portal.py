@@ -697,15 +697,22 @@ class PatientAccountRepository:
             {"tenant_id": tenant_id, "patient_ref": shell["_id"]}, {"account_id": 1})
         return await self.get(link["account_id"]) if link else None
 
+    async def cy_shell_map(self, tenant_id: str) -> dict[str, str]:
+        """{καρτέλα-γέφυρα (ως κείμενο) → ψευδώνυμο ΓεΣΥ} — για κοινά κυκλώματα που κρατούν την καρτέλα
+        (πιστότητα, παραγγελίες e-shop) και πρέπει να μιλήσουν με τον πελάτη ΓεΣΥ."""
+        return {str(r["_id"]): r["cy_pseudo_id"] async for r in self.db["patients_anonymized"].find(  # tenant-ok
+            {"tenant_id": tenant_id, "source": "cy_portal"}, {"cy_pseudo_id": 1}) if r.get("cy_pseudo_id")}
+
     async def cy_members(self, tenant_id: str) -> list[dict]:
         """Οι πελάτες ΓεΣΥ αυτού του φαρμακείου με λογαριασμό πύλης: [{account_id, cy_pseudo}]."""
         shells = {r["_id"]: r["cy_pseudo_id"] async for r in self.db["patients_anonymized"].find(  # tenant-ok
             {"tenant_id": tenant_id, "source": "cy_portal"}, {"cy_pseudo_id": 1})}
         if not shells:
             return []
-        return [{"account_id": r["account_id"], "cy_pseudo": shells[r["patient_ref"]]}
+        return [{"account_id": r["account_id"], "cy_pseudo": shells[r["patient_ref"]], "since": r.get("created_at")}
                 async for r in self.db["patient_links"].find(  # tenant-ok: explicit tenant_id
-                    {"tenant_id": tenant_id, "patient_ref": {"$in": list(shells)}}, {"account_id": 1, "patient_ref": 1})]
+                    {"tenant_id": tenant_id, "patient_ref": {"$in": list(shells)}},
+                    {"account_id": 1, "patient_ref": 1, "created_at": 1})]
 
     async def cy_pseudo_of(self, tenant_id: str, patient_ref) -> str | None:
         """Από τον σύνδεσμο της πύλης (καρτέλα `cy_portal`) → ο πελάτης ΓεΣΥ (cy_patients.pseudo_id)."""

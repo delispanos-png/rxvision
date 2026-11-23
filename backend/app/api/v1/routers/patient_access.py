@@ -75,7 +75,11 @@ async def revoke(auth_id: str, ctx: TenantContext = Depends(require(_PERM, modul
 @router.get("/patients")
 async def search_patients(q: str = Query(..., min_length=2),
                           ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
-    """Δική της αναζήτηση — το `/patients/search` απαιτεί άλλο πρόσθετο."""
+    """Δική της αναζήτηση — το `/patients/search` απαιτεί άλλο πρόσθετο. Κύπρος: πελάτες ΓεΣΥ."""
+    from app.services.portal_access import _is_cy
+    if await _is_cy(ctx.tenant_id):
+        from app.repositories.cy_groups import search_patients as cy_search
+        return {"items": await cy_search(ctx.tenant_id, q, demo=ctx.demo)}
     from app.repositories.patients import PatientExecutionsRepository
     repo = PatientExecutionsRepository(tenant_id=ctx.tenant_id, demo=ctx.demo)
     return {"items": await repo.search(q)}

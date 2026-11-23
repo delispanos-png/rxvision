@@ -562,7 +562,7 @@ async def test_cy_portal_customer_side(mem, monkeypatch):
     link = await mem["patient_links"].find_one({"account_id": acc["_id"]})
     ctx = PatientContext(account_id=str(acc["_id"]), tenant_id=CY, patient_ref=str(link["patient_ref"]))
 
-    rx = await pr.cy_prescriptions(ctx)
+    rx = await pr.cy_prescriptions(for_ref=None, ctx=ctx)
     assert len(rx["history"]) == 1 and rx["history"][0]["lines"][0]["description"].startswith("JIVOLAR")
     assert rx["open"] == [], "6/6 → καμία ανοιχτή"
     # αιτήματα (ραντεβού/διαθεσιμότητα) ΜΟΝΟ στο δικό του φαρμακείο
@@ -579,7 +579,7 @@ async def test_cy_portal_customer_side(mem, monkeypatch):
     await mem["patient_accounts"].insert_one({"email": "gr@x.gr", "amka": "12345678901"})
     gr = await mem["patient_accounts"].find_one({"email": "gr@x.gr"})
     try:
-        await pr.cy_prescriptions(PatientContext(account_id=str(gr["_id"]), tenant_id=GR, patient_ref="x"))
+        await pr.cy_prescriptions(for_ref=None, ctx=PatientContext(account_id=str(gr["_id"]), tenant_id=GR, patient_ref="x"))
         raise AssertionError("ελληνικός λογαριασμός είδε κυπριακές συνταγές")
     except HTTPException as exc:
         assert exc.status_code == 404
@@ -2241,3 +2241,239 @@ async def test_base_find_all_has_no_page_cap_and_stays_in_tenant(mem):
         + [{"tenant_id": GR, "name": "ξένη", "level": 1, "order": 0}])
     tree = await PharmacyCategoryRepository(tenant_id=CY).tree()
     assert len(tree) == 790 and "ξένη" not in {t["name"] for t in tree}
+
+
+# ── Πύλη Κύπρου: πελάτες πύλης, εγγραφή χωρίς συνταγές, πρόσκληση (23/11/2026) ─────────────
+
+async def _portal_env(mem, monkeypatch):
+    from app.services.vault_service import vault
+    monkeypatch.setattr(vault, "tenant_pepper", lambda tid: "p")      # ίδιο pepper με το import των τεστ
+    mails: list = []
+
+    async def send_email(to, subject, body, **k):
+        mails.append((to, subject))
+    import app.services.mailer as mailer
+    monkeypatch.setattr(mailer, "send_email", send_email)
+    return mails
+
+
+async def test_register_without_dispensings_merges_with_later_xml(mem, monkeypatch):
+    """Εγγραφή με κωδικό ΟΑΥ ΠΡΙΝ από κάθε συνταγή → η πρώτη εκτέλεση κουμπώνει στην ΙΔΙΑ καρτέλα."""
+    from app.services.cy import analytics, portal
+    from app.services.cy.importer import import_files
+    await _portal_env(mem, monkeypatch)
+    r = await portal.register(CY, first_name="Ανδρέας", last_name="Συνθετικου", hio_code="900001", by="u1")
+    assert r["ok"] and not r["existed"]
+    lst = await analytics.patients(CY)
+    assert any(i["patient_ref"] == r["patient_id"] and i.get("no_dispensings") for i in lst["items"]), \
+        "πελάτης χωρίς εκτελέσεις φαίνεται στη λίστα"
+    assert (await portal.register(CY, first_name="Α", last_name="Β", hio_code="0900001"))["existed"], "ποτέ διπλός"
+    await import_files(CY, [("a.xml", DRUG_XML.encode())], pepper="p")
+    assert await mem["cy_patients"].count_documents({"tenant_id": CY}) == 1
+    d = await mem["cy_dispensings"].find_one({"tenant_id": CY})
+    assert d["patient_ref"] == r["patient_id"]
+    p = await mem["cy_patients"].find_one({"tenant_id": CY})
+    assert "0000999001" not in repr(p), "ο αριθμός ταυτότητας δεν αποθηκεύεται ποτέ"
+    # με ΜΟΝΟ ταυτότητα, ενώ υπάρχει ήδη από το XML → ο ίδιος (μέσω id_ref), όχι νέος
+    assert (await portal.register(CY, first_name="Α", last_name="Β", doc_type="NID",
+                                  doc_number="0000999001"))["patient_id"] == r["patient_id"]
+    assert (await portal.register(CY, first_name="Α", last_name="Β"))["error"] == "id_required"
+    assert await portal.register(GR, first_name="Α", last_name="Β", hio_code="900001") is not None
+    assert await mem["cy_patients"].count_documents({"tenant_id": CY}) == 1, "ανά φαρμακείο"
+
+
+async def test_cy_portal_customers_invite_resend_and_remove(mem, monkeypatch):
+    from app.services.cy import portal
+    from app.services.cy.importer import import_files
+    mails = await _portal_env(mem, monkeypatch)
+    await import_files(CY, [("a.xml", DRUG_XML.encode()), ("b.xml", CONS_XML.encode())], pepper="p")
+    c0 = await portal.customers(CY)
+    assert (c0["registered"], c0["total"], c0["to_invite"], c0["country"]) == (0, 2, 2, "CY")
+    # 1) νέος άνθρωπος ΧΩΡΙΣ συνταγές, μόνο με όνομα + κωδικό ΟΑΥ
+    r = await portal.invite(CY, email="new@mail.cy", hio_code="955555", first_name="Νίκος", last_name="Νέος", by="u1")
+    assert r["ok"] and mails[-1][0] == "new@mail.cy"
+    # 2) υπάρχων πελάτης ΓεΣΥ με κωδικό ΟΑΥ — λάθος ταυτότητα → άρνηση, σωστή → ok
+    bad = await portal.invite(CY, email="a@mail.cy", hio_code="900001", doc_type="NID", doc_number="123")
+    assert bad["error"] == "id_mismatch"
+    ok = await portal.invite(CY, email="a@mail.cy", hio_code="900001", doc_type="NID", doc_number="0000999001")
+    assert ok["ok"]
+    assert (await portal.invite(CY, email="b@mail.cy", hio_code="900001"))["error"] == "already_invited"
+    assert (await portal.invite(CY, email="c@mail.cy", hio_code="977777"))["error"] == "name_required"
+    c1 = await portal.customers(CY)
+    assert (c1["registered"], c1["total"], c1["to_invite"]) == (2, 3, 1)
+    by_name = {x["name"]: x for x in c1["registered_list"]}
+    assert by_name["ΝΙΚΟΣ ΝΕΟΣ"]["no_dispensings"] and not by_name["ΑΝΔΡΕΑΣ ΣΥΝΘΕΤΙΚΟΥ"]["no_dispensings"]
+    # ξεκλείδωμα με κωδικό ΟΑΥ ή email
+    assert (await portal.resend(CY, "900001"))["ok"]
+    assert (await portal.resend(CY, "new@mail.cy"))["ok"]
+    assert (await portal.resend(CY, "nobody@x.cy"))["error"] == "not_found"
+    # διαγραφή από την πύλη (ίδια με την Ελλάδα)
+    from app.repositories.patient_portal import PatientAccountRepository
+    rm = await PatientAccountRepository().remove_by_pharmacy(by_name["ΝΙΚΟΣ ΝΕΟΣ"]["account_id"], CY, by="u1")
+    assert rm["ok"] and (await portal.customers(CY))["registered"] == 1
+    assert await mem["cy_patients"].count_documents({"tenant_id": CY, "hio_code": "955555"}) == 1, \
+        "η καρτέλα του φαρμακείου μένει"
+
+
+async def test_portal_rx_number_checked_only_in_own_prescriptions(mem, monkeypatch):
+    """Ανάθεση συνταγής από την πύλη (Κύπρος): ο αριθμός ελέγχεται ΜΟΝΟ στις συνταγές ΤΟΥ ΙΔΙΟΥ του πελάτη."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services.cy import portal
+    from app.services.cy.importer import import_files
+    await _portal_env(mem, monkeypatch)
+    await import_files(CY, [("1", _rx("8101", "9101", "N-A", "2026-10-01 10:00:00 +0300", 1)),
+                            ("2", _rx("8202", "9202", "N-B", "2026-10-02 10:00:00 +0300", 1))], pepper="p")
+    a = await mem["cy_dispensings"].find_one({"dispensing_id": "9101"})
+    shell = await PatientAccountRepository().cy_shell(CY, a["patient_ref"], "A")
+    own = await portal.rx_snapshot(CY, str(shell), "8101")
+    assert own["found"] and own["repeat"] == "1/6" and own["open_date"]
+    assert not (await portal.rx_snapshot(CY, str(shell), "8202"))["found"], "ποτέ συνταγή άλλου πελάτη"
+    assert not (await portal.rx_snapshot(CY, None, "8101"))["found"]
+
+
+async def test_cy_loyalty_candidates_and_enroll(mem, monkeypatch):
+    """Πιστότητα → Εγγραφή μέλους (Κύπρος): υποψήφιοι = πελάτες ΓεΣΥ που δεν είναι μέλη· εγγραφή μέσω γέφυρας."""
+    from app.services.cy import portal
+    from app.services.cy.importer import import_files
+    await _portal_env(mem, monkeypatch)
+    await import_files(CY, [("a.xml", DRUG_XML.encode()), ("b.xml", CONS_XML.encode())], pepper="p")
+    await portal.register(CY, first_name="Νίκος", last_name="Νέος", hio_code="955555")
+    c = await portal.loyalty_candidates(CY, "νικ")
+    assert [x["name"] for x in c] == ["ΝΙΚΟΣ ΝΕΟΣ"], "και πελάτης χωρίς συνταγές, αναζήτηση χωρίς τόνους"
+    r = await portal.loyalty_enroll(CY, c[0]["patient_ref"])
+    assert r.get("ok", True) is not False
+    assert await portal.loyalty_candidates(CY, "νικ") == [], "ήδη μέλος → όχι υποψήφιος"
+    assert len(await portal.loyalty_candidates(CY, "900")) == 2, "αναζήτηση με κωδικό ΟΑΥ"
+    assert await portal.loyalty_candidates(GR, "νικ") == []
+
+
+async def test_cy_portal_access_parental_and_authorization(mem, monkeypatch):
+    """«Ποιος βλέπει ποιον» στην Κύπρο: ίδιοι κανόνες με την Ελλάδα, ταυτότητα ΓεΣΥ.
+    Γονική μέριμνα ΜΟΝΟ για ανήλικο (ακριβής ημ. γέννησης ΓεΣΥ)· εξουσιοδότηση ΜΟΝΟ από ενήλικο."""
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services import portal_access as pa
+    from app.services.cy import portal
+    from app.services.cy.importer import import_files
+    await _portal_env(mem, monkeypatch)
+    await import_files(CY, [("a.xml", DRUG_XML.encode()), ("b.xml", CONS_XML.encode())], pepper="p")
+    pats = {p["full_name"]: p["pseudo_id"] async for p in mem["cy_patients"].find({"tenant_id": CY})}
+    dad, mum = pats["ΑΝΔΡΕΑΣ ΣΥΝΘΕΤΙΚΟΥ"], pats["ΜΑΡΙΑ ΔΟΚΙΜΙΟΥ"]
+    kid = (await portal.register(CY, first_name="Παιδί", last_name="Συνθετικού", hio_code="966666",
+                                 dob="2015-05-05"))["patient_id"]
+    await mem["patient_groups"].insert_one({"tenant_id": CY, "kind": "family", "name": "Οικ.", "active": True,
+        "members": [{"pseudo_id": dad, "role": "Γονέας"}, {"pseudo_id": kid, "role": "Παιδί"},
+                    {"pseudo_id": mum, "role": "Σύζυγος"}]})
+    dad_shell = await PatientAccountRepository().cy_shell(CY, dad, "ΑΝΔΡΕΑΣ ΣΥΝΘΕΤΙΚΟΥ")
+    v = await pa.viewable_in_tenant(CY, str(dad_shell))
+    assert [x["pseudo_id"] for x in v] == [kid], "ο γονιός βλέπει ΜΟΝΟ το ανήλικο — όχι την ενήλικη σύζυγο"
+    assert await pa.can_view(CY, str(dad_shell), v[0]["patient_ref"]) is not None
+    mum_shell = await PatientAccountRepository().cy_shell(CY, mum, "ΜΑΡΙΑ ΔΟΚΙΜΙΟΥ")
+    assert await pa.can_view(CY, str(dad_shell), str(mum_shell)) is None
+    # εξουσιοδότηση: η ενήλικη μητέρα δίνει πρόσβαση στον πατέρα (από την οθόνη, με ψευδώνυμα ΓεΣΥ)
+    assert await pa._pseudo_of(CY, mum) == mum and await pa._pseudo_of(CY, str(mum_shell)) == mum
+    assert (await pa.grant(CY, grantor_pseudo=mum, grantee_pseudo=dad))["ok"]
+    assert await pa.can_view(CY, str(dad_shell), str(mum_shell)) is not None
+    assert (await pa.grant(CY, grantor_pseudo=kid, grantee_pseudo=mum))["error"] == "grantor_minor"
+    rows = await pa.list_all(CY)
+    assert rows[0]["grantor"]["patient_id"] == mum and rows[0]["grantee"]["name"] == "ΑΝΔΡΕΑΣ ΣΥΝΘΕΤΙΚΟΥ"
+    assert await pa._pseudo_of(GR, mum) is None, "ψευδώνυμο ΓεΣΥ δεν λύνεται σε ελληνικό φαρμακείο"
+
+
+async def test_cy_business_and_order_advisor_shape(mem):
+    """Επιχειρησιακά & Παραγγελία βάσει πρόβλεψης (Κύπρος): ΙΔΙΟ σχήμα με την Ελλάδα, τιμές από τους
+    κυπριακούς ορισμούς (Dashboard, Κερδοφορία, αλυσίδες, Πρόταση παραγγελίας) — κανένας νέος υπολογισμός."""
+    from datetime import date
+
+    from app.services.cy import advisor, analytics
+    await _parity_seed()
+    b = await advisor.business(CY, date(2026, 9, 1), date(2026, 11, 18))
+    s = await analytics.summary(CY, date(2026, 9, 1), date(2026, 11, 18))
+    assert set(b["kpis"]) == {"revenue", "gross_profit", "margin_pct", "rx", "claimed", "patients"}
+    assert b["kpis"]["revenue"]["value"] == s["value"] and b["kpis"]["claimed"]["value"] == s["hio"]
+    assert b["kpis"]["gross_profit"]["value"] is None, "χωρίς εκκαθάριση: κέρδος άγνωστο, όχι εικασία"
+    assert any(i["cta"] and i["cta"]["href"] == "/cy/settlement" for i in b["insights"])
+    assert all(i["cta"] is None or i["cta"]["href"].startswith("/cy/") for i in b["insights"]), "ποτέ ελληνική οθόνη"
+    o = await advisor.orders(CY, lead_days=60)
+    assert set(o) >= {"kpis", "insights", "suggestions", "upcoming", "cross_sell"}
+    assert all(u["expected_open_date"] for u in o["upcoming"])
+
+
+async def test_cy_audience_rules_and_campaign_only_matching(mem, monkeypatch):
+    """Ομάδες πελατών (Κύπρος): ίδιοι κανόνες, πελάτες ΓεΣΥ· άγνωστο/ελληνικό πεδίο → άρνηση (ποτέ «όλοι»)·
+    κλινικό μόνο σε φροντίδα· η καμπάνια πάει ΜΟΝΟ σε όσους ταιριάζουν."""
+    import pytest as _pt
+
+    from app.services import audience, campaign_engine
+    from app.services.cy import audience as cy_audience
+    from app.services.cy import contacts, portal
+    from app.services.cy.importer import import_files
+    await _portal_env(mem, monkeypatch)
+    await import_files(CY, [("a.xml", DRUG_XML.encode()), ("b.xml", CONS_XML.encode())], pepper="p")
+    await portal.register(CY, first_name="Νίκος", last_name="Νέος", hio_code="955555")
+    every = await audience.resolve(CY, {"match": "all", "conditions": [{"field": "rx_count", "op": "gte", "value": 0}]})
+    assert len(every) == 3
+    with_rx = await audience.resolve(CY, {"match": "all", "conditions": [{"field": "rx_count", "op": "gte", "value": 1}]})
+    assert len(with_rx) == 2, "ο πελάτης χωρίς συνταγές δεν έχει εκτελέσεις"
+    with _pt.raises(ValueError):
+        await audience.resolve(CY, {"match": "all", "conditions": [{"field": "icd10", "op": "contains", "value": "E11"}]},
+                               purpose="care")
+    with _pt.raises(PermissionError):
+        await audience.resolve(CY, {"match": "all", "conditions": [{"field": "therapy_atc", "op": "contains", "value": "A"}]})
+    assert "icd10" not in cy_audience.fields() and "therapy_atc" in cy_audience.fields()
+    smart = await audience.smart_counts(CY)
+    assert {s["key"] for s in smart} >= {"active", "vip", "loyalty"}
+    # καμπάνια με κανόνες: ΜΟΝΟ όσοι ταιριάζουν (και έχουν συγκατάθεση)
+    for ps in with_rx | (every - with_rx):
+        await contacts.set_contact(CY, ps, {"mobile": "99123456", "marketing_consent": True}, source="pharmacist")
+    r = await campaign_engine.create(CY, channel="sms", message="Γεια", subject=None, segment="all", value=None,
+                                     by="u1", audience_rules={"match": "all", "conditions": [
+                                         {"field": "rx_count", "op": "gte", "value": 1}]})
+    assert r["recipients"] == 2
+
+
+async def test_greek_loyalty_audience_counts_members(mem):
+    """23/11/2026: η ομάδα «Μέλη πιστότητας» μετρούσε ΠΑΝΤΑ 0 (ObjectId vs κείμενο). Τώρα μετρά τα μέλη."""
+    from bson import ObjectId
+
+    from app.services import audience
+    a, b = ObjectId(), ObjectId()
+    await mem["patients_anonymized"].insert_many([{"_id": a, "tenant_id": GR, "rx_count": 3},
+                                                  {"_id": b, "tenant_id": GR, "rx_count": 1}])
+    await mem["loyalty_members"].insert_one({"tenant_id": GR, "patient_ref": str(a)})
+    ids = await audience.resolve(GR, {"match": "all", "conditions": [{"field": "is_loyalty", "op": "is", "value": True}]})
+    assert ids == {a}
+
+
+def test_every_cy_route_has_an_addon_like_greece():
+    """Πρόσθετα ίδια με την Ελλάδα (23/11/2026): ΚΑΘΕ κυπριακό endpoint αντιστοιχεί σε πρόσθετο (ή ρητά
+    στην τροφοδοσία δεδομένων). Νέο endpoint χωρίς αντιστοίχιση → αποτυγχάνει εδώ, όχι σιωπηλά ανοιχτό."""
+    from app.api.v1.routers import cy
+    from app.services.cy.gate import CY_ROUTE_FREE, CY_ROUTE_MODULES, route_key
+    for r in cy.router.routes:
+        k = route_key("/api/v1/cy" + r.path)
+        assert k in CY_ROUTE_MODULES or k in CY_ROUTE_FREE, f"/cy{r.path}: χωρίς πρόσθετο"
+
+
+def test_locked_addon_blocks_cy_screen():
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.services.cy.gate import _check_modules
+
+    def ctx(**mods):
+        return SimpleNamespace(modules=mods, module_trials={})
+    with _pt_raises(HTTPException):
+        _check_modules(ctx(doctor_analytics="locked"), "/api/v1/cy/doctors")
+    _check_modules(ctx(doctor_analytics="enabled"), "/api/v1/cy/doctors/D1")
+    with _pt_raises(HTTPException):
+        _check_modules(ctx(), "/api/v1/cy/claim")                      # κλειστό Κλείσιμο μήνα
+    _check_modules(ctx(family_groups="enabled"), "/api/v1/cy/patients/x")   # Πελάτες: αρκεί ΕΝΑ
+    _check_modules(ctx(), "/api/v1/cy/import")                         # τροφοδοσία: πάντα
+    with _pt_raises(HTTPException):
+        _check_modules(ctx(dashboard="enabled"), "/api/v1/cy/new-thing")   # άγνωστο → κλειστό
+
+
+def _pt_raises(exc):
+    import pytest as _p
+    return _p.raises(exc)

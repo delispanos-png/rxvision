@@ -7,6 +7,7 @@ import { Users, Plus, Trash2, Save, Send, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
+import { useCountry } from "@/lib/cy";
 import { QueryState } from "@/components/ui/QueryState";
 
 type Smart = { key: string; icon: string; name: string; why: string; count: number; rules: Rules };
@@ -31,6 +32,7 @@ const OPS: Record<string, string> = {
 const inp = "rounded-lg border border-slate-300 px-2.5 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800";
 
 export default function AudiencesPage() {
+  const cy = useCountry() === "CY";
   const t = useT();
   const qc = useQueryClient();
   const router = useRouter();
@@ -60,8 +62,9 @@ export default function AudiencesPage() {
   const upd = (i: number, patch: Partial<Cond>) => setRules((r) => ({ ...r, conditions: r.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)) }));
   const rm = (i: number) => setRules((r) => ({ ...r, conditions: r.conditions.filter((_, j) => j !== i) }));
   // Το κοινό ταξιδεύει στη φόρμα μηνύματος — εκεί γράφει και στέλνει.
+  // Κύπρος: οι καμπάνιες ζουν στο /cy/campaigns (ίδια κανόνες, πελάτες ΓεΣΥ — services/cy/audience.py)
   const use = (rs: Rules, label: string) =>
-    router.push(`/communications?audience=${encodeURIComponent(JSON.stringify(rs))}&label=${encodeURIComponent(label)}`);
+    router.push(`${cy ? "/cy/campaigns" : "/communications"}?audience=${encodeURIComponent(JSON.stringify(rs))}&label=${encodeURIComponent(label)}`);
 
   return (
     <div className="space-y-6">

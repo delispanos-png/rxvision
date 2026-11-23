@@ -74,10 +74,13 @@ async def create(tenant_id: str, *, channel: str, message: str, subject: str | N
     db = shared_db()
     only = set(only_ids) if only_ids is not None else None
     if await tenant_country(tenant_id) == "CY":
-        # Κύπρος: κοινό από cy_patients (το Audience Engine και τα ελληνικά segments στηρίζονται σε ΗΔΥΚΑ)
-        if audience_rules:
-            raise ValueError("audience_rules_not_supported_for_cy")
+        # Κύπρος: κοινό από cy_patients. «Ομάδα πελατών» (κανόνες) → ΙΔΙΟ Audience Engine, που στην Κύπρο
+        # γυρίζει ψευδώνυμα ΓεΣΥ (services/cy/audience.py) — 23/11/2026
         from app.services.cy import contacts as cy_contacts
+        if audience_rules:
+            from app.services import audience as aud
+            ruled = {cy_contacts.PREFIX + p for p in await aud.resolve(tenant_id, audience_rules, purpose=purpose)}
+            only = ruled if only is None else (only & ruled)
         rows = (await cy_contacts.audience(tenant_id, channel, segment, only=only))["recipients"]
     else:
         if audience_rules:

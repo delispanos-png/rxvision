@@ -24,6 +24,7 @@ const TABS = [
 // Κύπρος: νέο μήνυμα = Καμπάνιες Κύπρου (κοινά ΓεΣΥ)· οι «Ομάδες ανθρώπων» στηρίζονται σε ΗΔΥΚΑ → όχι
 const TABS_CY = [
   { href: "/cy/campaigns", el: "Νέο μήνυμα", en: "New message" },
+  { href: "/communications/audiences", el: "Ομάδες πελατών", en: "Customer groups" },
   { href: "/communications/automations", el: "Αυτόματα μηνύματα", en: "Automations" },
   { href: "/communications/calendar", el: "Ημερολόγιο", en: "Calendar" },
 ];

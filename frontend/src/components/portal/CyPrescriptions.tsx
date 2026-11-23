@@ -17,11 +17,16 @@ type Hist = { dispensed_at: string; kind: string; doctor: string | null; instanc
 
 const eur = (c: number) => new Intl.NumberFormat("el-CY", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
 
-export function CyPrescriptions() {
+export function CyPrescriptions({ forRef }: { forRef?: string } = {}) {
   const t = useT();
   const [data, setData] = useState<{ open: Open[]; history: Hist[] } | null>(null);
   const [err, setErr] = useState(false);
-  useEffect(() => { patientApi<{ open: Open[]; history: Hist[] }>("/patient/cy/prescriptions").then(setData).catch(() => setErr(true)); }, []);
+  // «Προβολή ως» (παιδί/εξουσιοδότηση): ο διακομιστής ελέγχει το δικαίωμα (`_view_target`)
+  useEffect(() => {
+    setData(null); setErr(false);
+    patientApi<{ open: Open[]; history: Hist[] }>(`/patient/cy/prescriptions${forRef ? `?for=${encodeURIComponent(forRef)}` : ""}`)
+      .then(setData).catch(() => setErr(true));
+  }, [forRef]);
   if (err) return <p className="text-sm text-slate-500">{t("Οι συνταγές δεν είναι διαθέσιμες αυτή τη στιγμή.", "Prescriptions are not available right now.")}</p>;
   if (!data) return <Loader2 className="h-5 w-5 animate-spin text-slate-400" />;
   const when = (d: number) => d === 0 ? t("σήμερα", "today") : d > 0 ? t(`σε ${d} ημέρες`, `in ${d} days`) : t(`πριν ${-d} ημέρες`, `${-d} days ago`);

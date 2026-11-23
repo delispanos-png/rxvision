@@ -13,6 +13,7 @@ import { fmtDate, fmtDateTime } from "@/lib/formatters";
 import { CalendarSyncCard } from "@/components/CalendarSyncCard";
 import { toastSuccess, toastError } from "@/store/toastStore";
 import { appConfirm } from "@/store/dialogStore";
+import { CyPortalCustomers } from "@/components/cy/CyPortalCustomers";
 
 type Avail = { id?: string; _id?: string; query: string; medicine_name?: string | null; patient_name?: string; patient_phone?: string; status: string; answer?: string | null; created_at: string; pickup_intent?: { coming: boolean; date?: string | null; at?: string } | null };
 type Appt = { id?: string; _id?: string; service_name: string; kind?: string; note?: string; patient_name?: string; patient_phone?: string; requested_at: string; status: string };
@@ -403,6 +404,7 @@ function RxImage({ reqId }: { reqId: string }) {
 
 function RxRequestsTab() {
   const t = useT();
+  const cy = useCountry() === "CY";   // Κύπρος: ο αριθμός ελέγχθηκε στις συνταγές ΓεΣΥ του πελάτη, όχι στην ΗΔΥΚΑ
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["portal-rxreq"], queryFn: () => api<{ items: RxReq[] }>("/portal/rx-requests"), refetchInterval: 15000 });
   const [replies, setReplies] = useState<Record<string, string>>({});
@@ -441,7 +443,7 @@ function RxRequestsTab() {
               {r.kind === "photo" && r.image_id && <RxImage reqId={id} />}
               {c?.found && (
                 <div className="min-w-[220px] flex-1 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
-                  <div className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">✓ {t("Επιβεβαιώθηκε από ΗΔΥΚΑ", "Verified by ΗΔΥΚΑ")}</div>
+                  <div className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">✓ {cy ? t("Βρέθηκε στις συνταγές ΓεΣΥ του πελάτη", "Found in the customer's GHS prescriptions") : t("Επιβεβαιώθηκε από ΗΔΥΚΑ", "Verified by ΗΔΥΚΑ")}</div>
                   {!!c.medicines?.length && (
                     <div className="mt-2">
                       <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700/70 dark:text-emerald-400/70">{t("Φάρμακα", "Medicines")} ({c.medicines.length})</div>
@@ -459,16 +461,17 @@ function RxRequestsTab() {
                     {c.open_date && (() => {
                       // ΠΟΤΕ ανοίγει: μελλοντική = να την περιμένεις (και να έχεις έτοιμα τα φάρμακα)
                       const future = c.open_date > new Date().toISOString().slice(0, 10);
+                      if (cy) return <span className={future ? "font-semibold text-amber-700 dark:text-amber-400" : ""}>🔁 {t("Επόμενη φάση", "Next step")} {fmtDate(c.open_date)}{c.repeat ? ` · ${t("έχουν δοθεί", "given")} ${c.repeat}` : ""}</span>;
                       return <span className={future ? "font-semibold text-amber-700 dark:text-amber-400" : ""}>🔓 {future ? t("Ανοίγει", "Opens") : t("Εκτελείται από", "Open since")} {fmtDate(c.open_date)}{c.repeat ? ` · ${c.repeat}` : ""}</span>;
                     })()}
                     {c.issue_date && <span>📅 {t("Έκδοση", "Issued")} {c.issue_date}</span>}
                     {c.deadline_date && <span>⏳ {t("Λήξη", "Expires")} {c.deadline_date}</span>}
                     {c.intangible && <span>📲 {t("Άυλη", "Paperless")}</span>}
-                    {typeof c.exec_count === "number" && <span>🔁 {c.exec_count} {t("εκτ.", "exec")}</span>}
+                    {typeof c.exec_count === "number" && !cy && <span>🔁 {c.exec_count} {t("εκτ.", "exec")}</span>}
                   </div>
                 </div>
               )}
-              {c && c.available && !c.found && <div className="text-xs text-amber-600">{t("Δεν εντοπίστηκε στην ΗΔΥΚΑ — έλεγξε χειροκίνητα.", "Not found in ΗΔΥΚΑ — check manually.")}</div>}
+              {c && c.available && !c.found && <div className="text-xs text-amber-600">{cy ? t("Δεν βρέθηκε στις συνταγές ΓεΣΥ του πελάτη — έλεγξε χειροκίνητα.", "Not in the customer's GHS prescriptions — check manually.") : t("Δεν εντοπίστηκε στην ΗΔΥΚΑ — έλεγξε χειροκίνητα.", "Not found in ΗΔΥΚΑ — check manually.")}</div>}
             </div>
             {r.note && <div className="mt-2 text-xs text-slate-500">📝 {r.note}</div>}
             {r.reply ? (
@@ -609,8 +612,8 @@ function ServicesTab() {
 
 export default function PortalAdminPage() {
   const t = useT();
-  // Κύπρος: χωρίς «Πελάτες πύλης» (πρόσκληση/QR με ΑΜΚΑ) και «Συνταγές» (ΗΔΥΚΑ). Ο Κύπριος πελάτης
-  // προσκαλείται από την Καρτέλα πελάτη ΓεΣΥ· εδώ μένουν τα αιτήματα που στέλνει από την πύλη.
+  // Κύπρος (23/11/2026): «Πελάτες πύλης» με κυπριακή ταυτότητα (CyPortalCustomers)· «Συνταγές» = αιτήματα
+  // από την πύλη (φωτογραφία ή αριθμός συνταγής ΓεΣΥ, ελεγμένος στις συνταγές του πελάτη — services/cy/portal.py).
   const cy = useCountry() === "CY";
   const [tab, setTab] = useState("customers");
   const TABS: [string, string, typeof MessageSquare][] = ([
@@ -619,8 +622,7 @@ export default function PortalAdminPage() {
     ["availability", t("Διαθεσιμότητα", "Availability"), MessageSquare],
     ["appointments", t("Ραντεβού", "Appointments"), CalendarClock],
     ["services", t("Υπηρεσίες", "Services"), Stethoscope],
-  ] as [string, string, typeof MessageSquare][]).filter(([k]) => !cy || !["customers", "rx"].includes(k));
-  useEffect(() => { if (cy && ["customers", "rx"].includes(tab)) setTab("availability"); }, [cy, tab]);
+  ] as [string, string, typeof MessageSquare][]);
   // Η καρτέλα οδηγείται ΚΑΙ από το URL hash → κάθε tab = αυτόνομο entry στο μενού «Πύλη πελατών».
   useEffect(() => {
     const valid = TABS.map((x) => x[0]);
@@ -639,8 +641,8 @@ export default function PortalAdminPage() {
           <p className="text-sm text-slate-500">{t("Επίλεξε ενότητα από το μενού «Πύλη πελατών» αριστερά.", "Pick a section from the «Customer Portal» menu on the left.")}</p>
         </div>
       </div>
-      {tab === "customers" && !cy && <PortalCustomersTab />}
-      {tab === "rx" && !cy && <RxRequestsTab />}
+      {tab === "customers" && (cy ? <CyPortalCustomers /> : <PortalCustomersTab />)}
+      {tab === "rx" && <RxRequestsTab />}
       {tab === "availability" && <AvailabilityTab />}
       {tab === "appointments" && <AppointmentsTab />}
       {tab === "services" && <ServicesTab />}

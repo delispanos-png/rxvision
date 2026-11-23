@@ -114,6 +114,24 @@ def uses_clinical(rules: dict) -> bool:
 
 
 # ── υπολογισμός ─────────────────────────────────────────────────────────────────────────────
+async def loyalty_maps(tenant_id: str, used: set) -> tuple[set[str], dict[str, int]]:
+    """(μέλη πιστότητας, πόντοι ανά μέλος) — κλειδί = `patient_ref` ως ΚΕΙΜΕΝΟ. Ένας ορισμός για
+    Ελλάδα και Κύπρο (στην Κύπρο το `patient_ref` είναι η καρτέλα-γέφυρα του πελάτη ΓεΣΥ)."""
+    if not ({"loyalty_points", "is_loyalty"} & used):
+        return set(), {}
+    from app.repositories.loyalty import LoyaltyRepository
+    refs = [str(m["patient_ref"]) async for m in shared_db()["loyalty_members"].find(
+        {"tenant_id": tenant_id}, {"patient_ref": 1})]
+    points: dict[str, int] = {}
+    if "loyalty_points" in used and refs:
+        try:
+            bal = await LoyaltyRepository(tenant_id=tenant_id).balances_for_refs(refs)
+            points = {str(k): int((v or {}).get("points") or 0) for k, v in bal.items()}
+        except Exception:                                  # noqa: BLE001
+            points = {}
+    return set(refs), points
+
+
 def _cmp(op: str, val: Any, want: Any) -> bool:
     if val is None:
         return False
@@ -159,16 +177,15 @@ async def resolve(tenant_id: str, rules: dict, *, purpose: str = "commercial") -
     match_all = (rules or {}).get("match", "all") != "any"
     used = {c.get("field") for c in conds}
     now = _now()
+    from app.services.cy.gate import tenant_country
+    if await tenant_country(tenant_id) == "CY":       # Κύπρος: ίδιοι κανόνες, πελάτες ΓεΣΥ
+        from app.services.cy import audience as cy_audience
+        return await cy_audience.resolve(tenant_id, conds, match_all=match_all, used=used, purpose=purpose)
 
-    points: dict = {}
-    if "loyalty_points" in used or "is_loyalty" in used:
-        from app.repositories.loyalty import LoyaltyRepository
-        refs = [m["patient_ref"] async for m in db["loyalty_members"].find(
-            {"tenant_id": tenant_id}, {"patient_ref": 1})]
-        try:
-            points = await LoyaltyRepository(tenant_id=tenant_id).balances_for_refs(refs)
-        except Exception:                                  # noqa: BLE001
-            points = {r: 0 for r in refs}
+    # ΠΙΣΤΟΤΗΤΑ (διόρθωση 23/11/2026): πριν, «μέλος» = `pid in points` με pid ObjectId και κλειδιά
+    # κείμενο → ΠΟΤΕ αληθές· «πόντοι» = λεξικό {points, balance} συγκρινόμενο με αριθμό· και η πηγή
+    # γύριζε ΜΟΝΟ μέλη με θετικό υπόλοιπο. Μετρημένο: 3 φαρμακεία με μέλη → η ομάδα «Μέλη πιστότητας» = 0.
+    enrolled, points = await loyalty_maps(tenant_id, used)
 
     orders: dict = {}
     if "orders_count" in used or "days_since_order" in used:
@@ -211,8 +228,8 @@ async def resolve(tenant_id: str, rules: dict, *, purpose: str = "commercial") -
             "lifecycle": p.get("lifecycle"),
             "area": p.get("residence_area_canonical") or p.get("residence_area"),
             "has_portal": pid in portal,
-            "is_loyalty": pid in points,
-            "loyalty_points": points.get(pid, 0),
+            "is_loyalty": str(pid) in enrolled,
+            "loyalty_points": points.get(str(pid), 0),
             "orders_count": (orders.get(str(pid)) or {}).get("n", 0),
             "days_since_order": ((now - orders[str(pid)]["last"].replace(tzinfo=timezone.utc)).days
                                  if orders.get(str(pid), {}).get("last") else None),

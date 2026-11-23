@@ -61,9 +61,53 @@ def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
+async def _is_cy(tenant_id: str) -> bool:
+    from app.services.cy.gate import tenant_country
+    return await tenant_country(tenant_id) == "CY"
+
+
+def _minor(p: dict) -> bool:
+    """Ανήλικος ΤΩΡΑ. Κύπρος: από την ΑΚΡΙΒΗ ημερομηνία γέννησης του ΓεΣΥ· Ελλάδα: ΑΜΚΑ/έτος.
+    Άγνωστο → ΟΧΙ (κλειστή αποτυχία, ίδιος κανόνας με το `is_minor`)."""
+    if p.get("cy"):
+        from app.repositories.cy_groups import _minor as cy_minor
+        return cy_minor(p.get("dob"))
+    return is_minor(p.get("amka"), p.get("birth_year"))
+
+
+async def _cy_patients_by_pseudo(tenant_id: str, pseudos: list[str]) -> dict[str, dict]:
+    """ΚΥΠΡΟΣ (23/11/2026): οι άνθρωποι είναι πελάτες ΓεΣΥ (`cy_patients`, ψευδώνυμο ΓεΣΥ)· η «καρτέλα
+    πύλης» (`_id`) είναι η γέφυρα `cy_portal` — υπάρχει μόνο αν ο άνθρωπος έχει ήδη μπει σε κοινό κύκλωμα."""
+    from app.repositories.cy import CyPatientRepository, find_all
+    rows = await find_all(CyPatientRepository(tenant_id=tenant_id), {"pseudo_id": {"$in": pseudos}})
+    shells = {d["cy_pseudo_id"]: d["_id"] async for d in shared_db()["patients_anonymized"].find(  # tenant-ok
+        {"tenant_id": tenant_id, "source": "cy_portal", "cy_pseudo_id": {"$in": pseudos}}, {"cy_pseudo_id": 1})}
+    return {p["pseudo_id"]: {"_id": shells.get(p["pseudo_id"]), "pseudo_id": p["pseudo_id"], "cy": True,
+                             "full_name": p.get("full_name"), "dob": p.get("dob"), "amka": None,
+                             "deceased": bool((p.get("deceased") or {}).get("at"))} for p in rows}
+
+
+async def _ref_of(tenant_id: str, p: dict) -> str:
+    """Η καρτέλα πύλης του ανθρώπου (για την «προβολή ως» στην πύλη). Κύπρος: δημιουργείται αν λείπει."""
+    if p.get("_id") is None and p.get("cy"):
+        from app.repositories.patient_portal import PatientAccountRepository
+        p["_id"] = await PatientAccountRepository().cy_shell(tenant_id, p["pseudo_id"], p.get("full_name"))
+    return str(p["_id"])
+
+
+def _public_id(p: dict) -> str | None:
+    """Το αναγνωριστικό που δείχνει η οθόνη του φαρμακοποιού: Κύπρος = ψευδώνυμο ΓεΣΥ (καρτέλα /cy/patients),
+    Ελλάδα = η καρτέλα (`patients_anonymized._id`)."""
+    if p.get("cy"):
+        return p.get("pseudo_id")
+    return str(p["_id"]) if p.get("_id") else None
+
+
 async def _patients_by_pseudo(tenant_id: str, pseudos: list[str]) -> dict[str, dict]:
     if not pseudos:
         return {}
+    if await _is_cy(tenant_id):
+        return await _cy_patients_by_pseudo(tenant_id, pseudos)
     db = shared_db()
     out = {}
     async for p in db["patients_anonymized"].find(
@@ -74,9 +118,20 @@ async def _patients_by_pseudo(tenant_id: str, pseudos: list[str]) -> dict[str, d
 
 
 async def _pseudo_of(tenant_id: str, patient_ref: Any) -> str | None:
-    p = await shared_db()["patients_anonymized"].find_one(
-        {"tenant_id": tenant_id, "_id": _oid(patient_ref)}, {"pseudo_id": 1})
-    return (p or {}).get("pseudo_id")
+    """Καρτέλα (ObjectId) → ψευδώνυμο. Κύπρος: η καρτέλα-γέφυρα δείχνει στο ψευδώνυμο ΓεΣΥ· δεκτό και
+    το ίδιο το ψευδώνυμο ΓεΣΥ (από την οθόνη του φαρμακοποιού), αφού ελεγχθεί ότι υπάρχει ΣΕ ΑΥΤΟ το φαρμακείο."""
+    oid = _oid(patient_ref)
+    if oid:
+        p = await shared_db()["patients_anonymized"].find_one(
+            {"tenant_id": tenant_id, "_id": oid}, {"pseudo_id": 1, "source": 1, "cy_pseudo_id": 1})
+        if (p or {}).get("source") == "cy_portal":
+            return p.get("cy_pseudo_id")
+        return (p or {}).get("pseudo_id")
+    if patient_ref and await _is_cy(tenant_id):
+        from app.repositories.cy import CyPatientRepository
+        c = await CyPatientRepository(tenant_id=tenant_id).find_one({"pseudo_id": str(patient_ref)})
+        return c["pseudo_id"] if c else None
+    return None
 
 
 async def viewable_in_tenant(tenant_id: str, viewer_ref: Any, *,
@@ -101,9 +156,9 @@ async def viewable_in_tenant(tenant_id: str, viewer_ref: Any, *,
         pats = await _patients_by_pseudo(tenant_id, others)
         for ps, p in pats.items():
             # ΑΝΗΛΙΚΟΣ, υπολογισμένο ΤΩΡΑ. Ενηλικιώθηκε → φεύγει από μόνο του.
-            if not is_minor(p.get("amka"), p.get("birth_year")):
+            if not _minor(p):
                 continue
-            found[ps] = {"patient_ref": str(p["_id"]), "pseudo_id": ps,
+            found[ps] = {"patient_ref": await _ref_of(tenant_id, p), "pseudo_id": ps,
                          "name": mask_name(p.get("full_name"), demo),
                          "relation": PARENTAL, "via": g.get("name"),
                          "deceased": bool(p.get("deceased"))}
@@ -114,7 +169,7 @@ async def viewable_in_tenant(tenant_id: str, viewer_ref: Any, *,
         {"grantor_pseudo": 1})]
     if grantors:
         for ps, p in (await _patients_by_pseudo(tenant_id, grantors)).items():
-            found[ps] = {"patient_ref": str(p["_id"]), "pseudo_id": ps,
+            found[ps] = {"patient_ref": await _ref_of(tenant_id, p), "pseudo_id": ps,
                          "name": mask_name(p.get("full_name"), demo),
                          "relation": AUTHORIZED, "via": None,
                          "deceased": bool(p.get("deceased"))}
@@ -168,7 +223,7 @@ async def list_all(tenant_id: str, *, demo: bool = False, limit: int = 300) -> l
 
     def who(ps: str) -> dict:
         p = pats.get(ps) or {}
-        return {"patient_id": str(p["_id"]) if p.get("_id") else None,
+        return {"patient_id": _public_id(p),
                 "name": mask_name(p.get("full_name"), demo) or "—",
                 "deceased": bool(p.get("deceased"))}
 
@@ -190,7 +245,7 @@ async def grant(tenant_id: str, *, grantor_pseudo: str, grantee_pseudo: str,
         return {"ok": False, "error": "deceased"}
     # Ο ΑΝΗΛΙΚΟΣ δεν δίνει εξουσιοδότηση — γι' αυτόν ισχύει η γονική μέριμνα, που είναι
     # αυτόματη και παύει μόνη της. Αν το επιτρέπαμε, θα επιβίωνε μετά τα 18.
-    if is_minor(gr.get("amka"), gr.get("birth_year")):
+    if _minor(gr):
         return {"ok": False, "error": "grantor_minor"}
     exists = await db[AUTH_COLL].find_one({"tenant_id": tenant_id, "grantor_pseudo": grantor_pseudo,
                                            "grantee_pseudo": grantee_pseudo, "revoked_at": None})

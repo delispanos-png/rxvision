@@ -43,6 +43,30 @@ async def lost_customers(ctx: TenantContext = Depends(require_cy)):
     return await chains.lost_customers(ctx.tenant_id)
 
 
+class NewPatientIn(BaseModel):
+    first_name: str = Field(..., min_length=1, max_length=60)
+    last_name: str = Field(..., min_length=1, max_length=80)
+    hio_code: str | None = Field(None, max_length=20)
+    doc_type: str = Field("NID", pattern="^(NID|ARC|PASSPORT)$")
+    doc_number: str | None = Field(None, max_length=20)
+    dob: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    gender: str | None = Field(None, pattern="^(M|F)$")
+    mobile: str | None = Field(None, max_length=30)
+    email: str | None = Field(None, max_length=200)
+
+
+@router.post("/patients", status_code=201)
+async def patient_register(body: NewPatientIn, ctx: TenantContext = Depends(require_cy)):
+    """Νέος πελάτης ΧΩΡΙΣ εκτελέσεις ΓεΣΥ (π.χ. μόνο μη συνταγογραφούμενα, μέλος οικογένειας) — με τον ΙΔΙΟ
+    κανόνα κλειδιού με το XML (κωδικός ΟΑΥ, αλλιώς έγγραφο), ώστε η πρώτη εκτέλεση να κουμπώσει στην ίδια καρτέλα."""
+    from app.services.cy import portal as cy_portal
+    _perm(ctx, "patients:read")
+    r = await cy_portal.register(ctx.tenant_id, **body.model_dump(), by=ctx.user_id)
+    if not r.get("ok"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, r.get("error") or "bad_request")
+    return r
+
+
 @router.get("/patients/{ref}")
 async def patient_card(ref: str, ctx: TenantContext = Depends(require_cy)):
     """Καρτέλα πελάτη: ανοιχτές/χαμένες συνταγές, ιστορικό, γιατροί, απαλλαγή, διαβήτης."""
@@ -435,6 +459,11 @@ async def import_xml(files: list[UploadFile] = File(...), ctx: TenantContext = D
 
 # ── Καμπάνιες (ίδια μηχανή αποστολής με την Ελλάδα, κυπριακό κοινό) ──────────
 
+def _uses_clinical(rules: dict) -> bool:
+    from app.services.audience import uses_clinical
+    return uses_clinical(rules)
+
+
 class CyCouponIn(BaseModel):
     discount_type: str = Field("pct", pattern="^(pct|fixed)$")
     discount_value: int = Field(..., ge=1, le=100000)   # pct: 1-100 · fixed: λεπτά
@@ -449,6 +478,7 @@ class CyCampaignIn(BaseModel):
     subject: str | None = Field(None, max_length=150)
     message: str = Field(..., min_length=3, max_length=1000)
     coupon: CyCouponIn | None = None     # {coupon} στο κείμενο γίνεται ο κωδικός — ΜΟΝΟ σε εμπορικό μήνυμα
+    rules: dict | None = None            # «Ομάδα πελατών» (κανόνες, services/cy/audience.py) αντί για segment
 
 
 @router.get("/campaigns/segments")
@@ -457,13 +487,37 @@ async def campaign_segments(ctx: TenantContext = Depends(require_cy)):
     return {"items": [{"key": k, "label": v[0], "label_en": v[1], "clinical": v[2]} for k, v in SEGMENTS.items()]}
 
 
+async def _rules_only(ctx: TenantContext, rules: dict | None, purpose: str) -> set[str] | None:
+    """«Ομάδα πελατών» → ΜΟΝΟ αυτοί (`cy:<pseudo>`). Κλινικός κανόνας μόνο σε μήνυμα φροντίδας
+    (ΕΝΑ σημείο ελέγχου: services/audience.resolve)."""
+    if not rules:
+        return None
+    from app.services import audience
+    try:
+        ids = await audience.resolve(ctx.tenant_id, rules, purpose=purpose)
+    except PermissionError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "clinical_segment_requires_care_purpose") from None
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    from app.services.cy.contacts import PREFIX
+    return {PREFIX + p for p in ids}
+
+
 @router.get("/campaigns/audience")
-async def campaign_audience(channel: str, segment: str = "all", ctx: TenantContext = Depends(require_cy)):
+async def campaign_audience(channel: str, segment: str = "all", rules: str | None = None,
+                            purpose: str = Query("commercial", pattern="^(commercial|care)$"),
+                            ctx: TenantContext = Depends(require_cy)):
     """Πόσοι θα το λάβουν και πόσοι εξαιρούνται, και γιατί, ΠΡΙΝ την αποστολή."""
+    import json
+
     from app.services.cy import contacts as cy_contacts
     _perm(ctx, "portal:manage")
     try:
-        a = await cy_contacts.audience(ctx.tenant_id, channel, segment)
+        only = await _rules_only(ctx, json.loads(rules) if rules else None, purpose)
+    except json.JSONDecodeError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_rules") from None
+    try:
+        a = await cy_contacts.audience(ctx.tenant_id, channel, "all" if only is not None else segment, only=only)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
     return {k: v for k, v in a.items() if k != "recipients"} | {
@@ -478,6 +532,9 @@ async def campaign_send(body: CyCampaignIn, ctx: TenantContext = Depends(require
     from app.services.cy.contacts import SEGMENTS, clinical
     from app.workers.comms import dispatch_campaign
     _perm(ctx, "portal:manage")
+    if body.rules:
+        await _rules_only(ctx, body.rules, body.purpose)   # έγκαιρη άρνηση (κλινικό σε εμπορικό, άγνωστο πεδίο)
+        body.segment = "all"                  # η ομάδα κανόνων ΑΝΤΙΚΑΘΙΣΤΑ το segment — ΜΟΝΟ αυτοί
     if body.segment not in SEGMENTS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown_segment")
     if clinical(body.segment) and body.purpose != "care":
@@ -487,7 +544,7 @@ async def campaign_send(body: CyCampaignIn, ctx: TenantContext = Depends(require
     coupon_code = None
     if body.coupon:
         # ίδιος φρουρός με την Ελλάδα: μήνυμα φροντίδας / κλινικό κοινό ΔΕΝ κουβαλά προσφορά
-        if body.purpose == "care" or clinical(body.segment):
+        if body.purpose == "care" or clinical(body.segment) or (body.rules and _uses_clinical(body.rules)):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "care_message_cannot_carry_offer")
         if body.coupon.discount_type == "pct" and body.coupon.discount_value > 100:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "bad_discount")
@@ -502,6 +559,7 @@ async def campaign_send(body: CyCampaignIn, ctx: TenantContext = Depends(require
     res = await campaign_engine.create(
         ctx.tenant_id, channel=body.channel, message=body.message, subject=body.subject,
         segment=body.segment, value=None, purpose=body.purpose, coupon_code=coupon_code,
+        audience_rules=body.rules or None,
         by=getattr(ctx, "email", None) or ctx.user_id)
     res["coupon_code"] = coupon_code
     if res["recipients"]:

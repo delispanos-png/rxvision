@@ -56,13 +56,17 @@ function FolderWay() {
   const tid = me?.tenant_id;
   const [st, setSt] = useState<FolderState | null>(null);
   const [busy, setBusy] = useState(false);
+  // ΜΟΝΟ στον browser (ο server δεν έχει window → θα έβγαζε άλλο HTML: React #418, 23/11/2026)
+  const [supported, setSupported] = useState<boolean | null>(null);
+  useEffect(() => { setSupported(folderSupported()); }, []);
   const refresh = useCallback(async () => { if (tid) setSt(await folderState(tid)); }, [tid]);
   useEffect(() => {
     refresh();
     window.addEventListener("cy-folder-scanned", refresh);
     return () => window.removeEventListener("cy-folder-scanned", refresh);
   }, [refresh]);
-  if (!folderSupported()) return (
+  if (supported === null) return null;
+  if (!supported) return (
     <p className="text-sm text-slate-500">{t("Χρειάζεται Google Chrome ή Microsoft Edge στον υπολογιστή.", "Needs Google Chrome or Microsoft Edge on the computer.")}</p>);
   if (!tid) return null;
   const run = async (fn: () => Promise<unknown>) => {

@@ -13,10 +13,14 @@ export const CY_ALLOWED = ["/cy", "/connect", "/account", "/manual", "/support-l
   "/settings/communications", "/settings/ai-usage", "/settings/api-keys", "/settings/pharmacy-chat",
   "/settings/catalog", "/pharmacat", "/copilot", "/coach", "/therapies", "/patients/families", "/care",
   // κοινά κυκλώματα που δουλεύουν αυτούσια (βλ. CY_PICK στο navCatalog)
-  "/marketing", "/communications/automations", "/communications/calendar", "/eshop-offers", "/eshop-categories", "/eshop-fees", "/warehouse",
+  "/marketing", "/communications/automations", "/communications/calendar", "/communications/audiences", "/eshop-offers", "/eshop-categories", "/eshop-fees", "/warehouse",
   "/orders-delivery", "/portal-admin", "/loyalty",
   // Patient Intelligence: ΙΔΙΕΣ οθόνες, δεδομένα ΓεΣΥ (backend repositories/cy_intelligence.py)
-  "/intelligence", "/nutrition"];
+  "/intelligence", "/nutrition",
+  // 23/11/2026: οδηγός δεικτών (από τη βοήθεια Κύπρου)
+  "/guide", "/patients/access",
+  // Επιχειρησιακά & Παραγγελία βάσει πρόβλεψης: ίδιες οθόνες, ορισμοί ΓεΣΥ (services/cy/advisor.py)
+  "/advisor", "/order-advisor"];
 
 const under = (path: string, base: string) => path === base || path.startsWith(base + "/");
 
