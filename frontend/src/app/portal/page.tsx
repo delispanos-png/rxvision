@@ -22,7 +22,7 @@ import { RenewalCard, type Renewal } from "@/components/portal/RenewalCard";
 import { ShopTab } from "@/components/portal/ShopTab";
 import { Toaster, toast, confirmDialog } from "@/components/portal/Toaster";
 import { TransferCard } from "@/components/portal/TransferCard";
-import { CyPrescriptions } from "@/components/portal/CyPrescriptions";
+import { CyPharmacyQr } from "@/components/portal/CyPharmacyQr";
 import { CalendarSyncCard } from "@/components/CalendarSyncCard";
 import { pushSupported, isPushSubscribed, enablePush } from "@/lib/push";
 import { BellRing, Unlink as LinkIcon2 } from "lucide-react";
@@ -106,11 +106,13 @@ function videoEmbed(url?: string | null): string | null {
   return null;
 }
 
-const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"], ["cyrx", "Οι συνταγές μου", "My prescriptions"]] as const;
-// ΚΥΠΡΟΣ: μόνο ό,τι δεν είναι ελληνικό (ΗΔΥΚΑ/ΑΜΚΑ). Οι συνταγές έρχονται από το ΓεΣΥ (cyrx).
+const TABS = [["home", "Αρχική", "Home"], ["rx", "Συνταγές", "Prescriptions"], ["shop", "e-Κατάστημα", "e-Store"], ["meds", "Πρόγραμμα λήψης", "Medication schedule"], ["health", "Υγεία", "Health"], ["wallet", "Επιβράβευση", "Rewards"], ["repeats", "Επαναλήψεις", "Refills"], ["renewals", "Ανεκτέλεστα", "Unexecuted"], ["assign", "Ανάθεση συνταγής", "Assign prescription"], ["availability", "Διαθεσιμότητα", "Availability"], ["appointments", "Ραντεβού", "Appointments"], ["pharmacies", "Φαρμακεία", "Pharmacies"]] as const;
+// ΚΥΠΡΟΣ: ΙΔΙΕΣ καρτέλες με την Ελλάδα (24/11/2026) — Αρχική/Συνταγές/Επαναλήψεις/Ανεκτέλεστα διαβάζουν τα ΙΔΙΑ
+// endpoints, που για λογαριασμό ΓεΣΥ απαντούν από τα δεδομένα ΓεΣΥ στο ίδιο σχήμα (services/cy/portal_rx.py).
+// Έξω μένει μόνο ό,τι δεν υπάρχει στην Κύπρο: «Φαρμακεία» (ο λογαριασμός ΓεΣΥ ανήκει σε ΕΝΑ φαρμακείο).
 // «meds» (Πρόγραμμα λήψης): η δοσολογία έρχεται από το XML ΓεΣΥ (services/cy/meds.py).
 // «health» (μετρήσεις/διατροφή στην καρτέλα πύλης) και «assign» (φωτογραφία ή αριθμός συνταγής ΓεΣΥ): 23/11/2026.
-const CY_TABS = new Set(["cyrx", "meds", "health", "shop", "wallet", "assign", "availability", "appointments"]);
+const CY_TABS = new Set(["home", "rx", "repeats", "renewals", "meds", "health", "shop", "wallet", "assign", "availability", "appointments"]);
 // Σύντομες ετικέτες για τη στενή κάτω μπάρα (mobile) — αλλιώς κόβονται άσχημα.
 const NAV_SHORT: Record<string, [string, string]> = { shop: ["Κατάστημα", "Store"], meds: ["Πρόγραμμα", "Schedule"] };
 
@@ -119,7 +121,7 @@ const NAV_SHORT: Record<string, [string, string]> = { shop: ["Κατάστημα
 const TAB_ICON: Record<string, LucideIcon> = {
   home: Home, rx: FileText, shop: ShoppingBag, meds: Pill, health: HeartPulse, wallet: Gift,
   repeats: RefreshCw, renewals: AlertCircle, assign: FilePlus, availability: Search, appointments: CalendarPlus,
-  pharmacies: MapPin, cyrx: FileText,
+  pharmacies: MapPin,
 };
 const TAB_LABEL: Record<string, [string, string]> = Object.fromEntries(TABS.map(([k, l, en]) => [k, [l, en]]));
 
@@ -335,7 +337,7 @@ export default function PortalHome() {
 
   useEffect(() => {
     if (!me) return;
-    if (me.country === "CY" && !CY_TABS.has(tab)) { setTab("cyrx"); return; }   // Κύπρος: ποτέ ελληνική καρτέλα
+    if (me.country === "CY" && !CY_TABS.has(tab)) { setTab("home"); return; }   // Κύπρος: μόνο ό,τι υπάρχει εκεί
     const c = me.caps ?? { shop: true, loyalty: true };   // αν η ενεργή καρτέλα δεν προσφέρεται πια → Αρχική
     if ((tab === "shop" && !c.shop) || (tab === "wallet" && !c.loyalty)) { setTab("home"); return; }
     if (tab === "home") {   // KPI της Αρχικής χρειάζονται renewals (διαθέσιμες τώρα) + loyalty (πόντοι)
@@ -874,7 +876,7 @@ export default function PortalHome() {
   // Καθολική λειτουργία «μεμονωμένο φαρμακείο» → κρύψε τον κατάλογο δικτύου + τον επιλογέα εναλλαγής.
   const single = me.portal_mode === "single";
   const isCy = me.country === "CY";
-  const visibleTabs = TABS.filter(([k]) => (isCy ? CY_TABS.has(k) : k !== "cyrx") && (k !== "shop" || caps.shop) && (k !== "wallet" || caps.loyalty) && (k !== "pharmacies" || !single));
+  const visibleTabs = TABS.filter(([k]) => (!isCy || CY_TABS.has(k)) && (k !== "shop" || caps.shop) && (k !== "wallet" || caps.loyalty) && (k !== "pharmacies" || !single));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1364,6 +1366,9 @@ export default function PortalHome() {
         {pushMsg && <div className="mb-4 rounded-xl bg-slate-100 dark:bg-slate-800 px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200">{pushMsg}</div>}
 
 
+        {/* Κύπρος: QR για την πύλη ΓεΣΥ ΜΠΡΟΣΤΑ στην Αρχική — το δείχνει σε κάθε επίσκεψη. Ίδιο κλειδί συσκευής
+            με τις «Συνταγές» (owner + «me»): γραμμένο μία φορά, φαίνεται και στα δύο σημεία. */}
+        {isCy && <div className="mb-4"><CyPharmacyQr owner={me.profile.email ?? "me"} button /></div>}
         {/* Κάρτα πιστότητας — γρήγορη πρόσβαση από την Αρχική (ο πελάτης δεν την ψάχνει) */}
         {loyalty?.enabled && loyalty.member && (
           <button onClick={() => setShowCard(true)}
@@ -1528,7 +1533,7 @@ export default function PortalHome() {
         </div>}
 
         {/* ── PRESCRIPTIONS ──────────────────────────────────── */}
-        {["rx", "repeats", "renewals", "assign", "cyrx"].includes(tab) && viewable.length > 0 && (
+        {["rx", "repeats", "renewals", "assign"].includes(tab) && viewable.length > 0 && (
           <div className={`mb-3 flex flex-wrap items-center gap-2 rounded-2xl border p-3 ${
             viewAs ? "border-sky-300 bg-sky-50 dark:bg-sky-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
             <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
@@ -2475,7 +2480,6 @@ export default function PortalHome() {
         )}
 
         {/* ── APPOINTMENTS ───────────────────────────────────── */}
-        {tab === "cyrx" && isCy && <CyPrescriptions forRef={viewAs?.patient_ref} />}
         {tab === "appointments" && (
           <div className="space-y-4">
             <CalendarSyncCard feedPath={calFeed}

@@ -530,8 +530,26 @@ async def my_prescriptions(ctx: PatientContext = Depends(get_patient_context)):
     # 200 ώστε η αναζήτηση (αρ. συνταγής / ημ. διάστημα) στην πύλη να καλύπτει αρκετό ιστορικό·
     # η προβολή δείχνει by default μόνο τις 5 πιο πρόσφατες.
     # ΟΛΑ τα φαρμακεία του πελάτη — κάθε εκτέλεση με ετικέτα «πού έγινε» (η συνταγή είναι δική του).
+    if (cy := await _cy_pseudo(ctx, ctx.tenant_id, ctx.patient_ref)) is not None:
+        from app.services.cy import portal_rx
+        from app.utils.masking import pseudo_name
+        pn = next((ln.get("pharmacy_name") for ln in await PatientAccountRepository().links(ctx.account_id)
+                   if ln.get("tenant_id") == ctx.tenant_id), None)
+        rows = await portal_rx.prescriptions(ctx.tenant_id, cy, demo=ctx.demo)
+        for r in rows:
+            r["tenant_id"], r["pharmacy_name"] = ctx.tenant_id, pseudo_name(pn, ctx.demo)
+        return {"items": rows}
     return {"items": await PatientAccountRepository().all_prescriptions(
         ctx.account_id, limit=200, demo=ctx.demo)}
+
+
+async def _cy_pseudo(ctx: PatientContext, tenant_id: str, patient_ref: str) -> str | None:
+    """Κύπρος: λογαριασμός ΓεΣΥ → το ψευδώνυμο ΓεΣΥ της καρτέλας (ή «» αν δεν έχει ακόμη εκτελέσεις).
+    Ελληνικός λογαριασμός → None (τα endpoints συνεχίζουν στον ελληνικό δρόμο, ανέγγιχτο).
+    Ένα σημείο απόφασης για όλες τις καρτέλες της πύλης (Αρχική/Συνταγές/Επαναλήψεις/Ανεκτέλεστα)."""
+    if not await _is_cy(ctx):
+        return None
+    return await PatientAccountRepository().cy_pseudo_of(tenant_id, patient_ref) or ""
 
 
 # ── ΠΟΙΟΝ ΒΛΕΠΩ ─────────────────────────────────────────────────────────────────────────
@@ -591,6 +609,9 @@ async def revoke_access(auth_id: str, ctx: PatientContext = Depends(get_patient_
 async def my_repeats(for_ref: str | None = Query(None, alias="for"),
                      ctx: PatientContext = Depends(get_patient_context)):
     tid, pref, _ = await _view_target(ctx, for_ref)
+    if (cy := await _cy_pseudo(ctx, tid, pref)) is not None:
+        from app.services.cy import portal_rx
+        return {"items": await portal_rx.repeats(tid, cy)}
     return {"items": await PatientRxRepository(tenant_id=tid).my_repeats(pref)}
 
 
@@ -599,6 +620,9 @@ async def my_summary(for_ref: str | None = Query(None, alias="for"),
                      ctx: PatientContext = Depends(get_patient_context)):
     """KPI snapshot for the portal home (counts, paid, fund-covered, repeats)."""
     tid, pref, _ = await _view_target(ctx, for_ref)
+    if (cy := await _cy_pseudo(ctx, tid, pref)) is not None:
+        from app.services.cy import portal_rx
+        return await portal_rx.summary(tid, cy)
     return await PatientRxRepository(tenant_id=tid).summary(pref)
 
 
@@ -613,6 +637,9 @@ async def prescriptions_for(for_ref: str = Query(..., alias="for"),
     ή η εξουσιοδότηση) — ένα κοινό endpoint θα έμπλεκε τα δύο και θα διέρρεε.
     """
     tid, pref, read_only = await _view_target(ctx, for_ref, tenant_id)
+    if (cy := await _cy_pseudo(ctx, tid, pref)) is not None:
+        from app.services.cy import portal_rx
+        return {"items": await portal_rx.prescriptions(tid, cy, demo=ctx.demo), "read_only": read_only}
     items = await PatientRxRepository(tenant_id=tid, demo=ctx.demo).my_prescriptions(pref)
     return {"items": items, "read_only": read_only}
 
@@ -1038,6 +1065,12 @@ async def my_renewals(for_ref: str | None = Query(None, alias="for"),
     """
     from app.utils.masking import mask_row
     tid, pref, _ = await _view_target(ctx, for_ref, tenant_id)
+    if (cy := await _cy_pseudo(ctx, tid, pref)) is not None:
+        from bson import ObjectId
+        from app.services.cy import portal_rx
+        intents = {i.get("key"): i async for i in shared_db()["renewal_intents"].find(
+            {"tenant_id": tid, "patient_ref": ObjectId(pref)})} if ObjectId.is_valid(pref) else {}
+        return {"items": await portal_rx.renewals(tid, cy, intents, demo=ctx.demo)}
     det = await AdvisorRepository(tenant_id=tid).recall_detail(str(pref))
     items = []
     for c in det.get("chains", []):
@@ -1088,6 +1121,12 @@ async def prescription_detail(barcode: str, tenant_id: str | None = None,
     """Λεπτομέρειες ΜΙΑΣ εκτέλεσης. Με `tenant_id` ανοίγει εκτέλεση άλλου φαρμακείου του πελάτη —
     ΜΟΝΟ αν είναι όντως linked εκεί (αλλιώς 403) και μόνο τη ΔΙΚΗ ΤΟΥ καρτέλα (patient_ref του link)."""
     tid, pref, _ = await _view_target(ctx, for_ref, tenant_id)
+    if (cy := await _cy_pseudo(ctx, tid, pref)) is not None:
+        from app.services.cy import portal_rx
+        d = await portal_rx.detail(tid, cy, barcode, demo=ctx.demo)
+        if d is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+        return d
     d = await PatientRxRepository(tenant_id=tid, demo=ctx.demo).my_prescription_detail(pref, barcode)
     if d is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
@@ -1580,37 +1619,39 @@ async def loyalty_cancel_request(body: LoyaltyCancelIn, ctx: PatientContext = De
 
 # ── Κύπρος: «Οι συνταγές μου (ΓεΣΥ)» ─────────────────────────────────────────
 
-@router.get("/cy/prescriptions")
-async def cy_prescriptions(for_ref: str | None = Query(None, alias="for"),
-                           ctx: PatientContext = Depends(get_patient_context)):
-    """Οι εκτελέσεις ΓεΣΥ του πελάτη σε ΑΥΤΟ το φαρμακείο + ανοιχτές συνταγές με επόμενη επίσκεψη.
-    Ίδιος ορισμός αλυσίδων με την πλευρά του φαρμακείου (services/cy/chains.py). Ελληνικός
-    λογαριασμός → 404 (ποτέ 403: η πύλη το ερμηνεύει ως αποσύνδεση)."""
-    from app.repositories.cy import CyDispensingRepository
-    from app.services.cy import chains
-    from app.services.cy.gate import cy_enabled
-    repo = PatientAccountRepository()
-    if not await _is_cy(ctx) or not await cy_enabled():
+class CyQrIn(BaseModel):
+    doc_type: str = Field("NID", pattern="^(NID|ARC)$")
+    doc_number: str = Field(..., min_length=4, max_length=20)
+    for_ref: str | None = None          # γονιός/εξουσιοδοτημένος: QR για άλλον (έλεγχος στο `_view_target`)
+
+
+@router.post("/cy/qr-check")
+async def cy_qr_check(body: CyQrIn, ctx: PatientContext = Depends(get_patient_context)):
+    """«QR για το φαρμακείο» (Κύπρος, 24/11/2026): ο φαρμακοποιός ψάχνει τις συνταγές στην πύλη ΓεΣΥ με
+    [ταυτότητα/ARC] + Tab + [ημ. γέννησης ΗΗ/ΜΜ/ΕΕΕΕ] — το QR τα γράφει με ένα σκανάρισμα.
+
+    ⚠ Ο αριθμός εγγράφου ΔΕΝ αποθηκεύεται ΠΟΤΕ στο RxVision (κανόνας ΓεΣΥ): ο πελάτης τον γράφει, εδώ
+    ελέγχεται ότι είναι ΑΥΤΟΣ των συνταγών του (σύγκριση ψευδωνύμων, ίδιος κανόνας με το XML) και μένει
+    μόνο στη δική του συσκευή, όπου φτιάχνεται και το QR. Επιστρέφουμε μόνο την ημ. γέννησης του ίδιου."""
+    import re as _re
+
+    from app.repositories.cy import CyPatientRepository
+    from app.services.cy.parser import patient_key
+    from app.services.vault_service import vault
+    from app.utils.anonymization import pseudonymize
+    if not await _is_cy(ctx):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "not_available")
-    # «Προβολή ως» (γονική μέριμνα / εξουσιοδότηση): ο έλεγχος γίνεται ΠΑΝΤΑ στο `_view_target`
-    _, pref, _ = await _view_target(ctx, for_ref)
-    pseudo = await repo.cy_pseudo_of(ctx.tenant_id, pref)
-    if not pseudo:
-        return {"open": [], "history": []}
-    cs = await chains.chains(ctx.tenant_id, match={"patient_ref": pseudo})
-    disp = await CyDispensingRepository(tenant_id=ctx.tenant_id).find(
-        {"patient_ref": pseudo}, sort=[("dispensed_at", -1)], limit=100)
-    return {
-        "open": [{"prescription_id": c["prescription_id"], "kind": c["kind"], "items": c["items"],
-                  "instance": c["instance"], "instances": c["instances"], "next_due": c["next_due"],
-                  "days_to_due": c["days_to_due"], "status": c["status"], "doctor": c["doctor"]}
-                 for c in sorted(cs, key=lambda c: c["days_to_due"]) if c["status"] != "closed"],
-        "history": [{"dispensed_at": d["dispensed_at"], "kind": d["kind"], "doctor": (d.get("doctor") or {}).get("name"),
-                     "instance": d.get("instance"), "instances": d.get("instances"),
-                     "paid_cents": (d.get("totals") or {}).get("beneficiary", 0),
-                     "lines": [{"description": ln.get("description"), "qty_disp": ln.get("qty_disp"),
-                                "qty_presc": ln.get("qty_presc"),
-                                "dosage": ((ln.get("dosage") or {}).get("raw_amount"), (ln.get("dosage") or {}).get("raw_frequency"),
-                                           (ln.get("dosage") or {}).get("timing"))}
-                               for ln in d.get("lines") or []]} for d in disp],
-    }
+    tid, pref, _ = await _view_target(ctx, body.for_ref)
+    pseudo = await PatientAccountRepository().cy_pseudo_of(tid, pref)
+    p = await CyPatientRepository(tenant_id=tid).find_one({"pseudo_id": pseudo}) if pseudo else None
+    if not p:
+        return {"ok": False, "error": "no_record"}
+    m = _re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", str(p.get("dob") or ""))
+    if not m:
+        return {"ok": False, "error": "no_dob"}
+    number = _re.sub(r"\s", "", body.doc_number)
+    if p.get("id_ref"):
+        given = pseudonymize(patient_key("", body.doc_type, number), tenant_pepper=vault.tenant_pepper(tid))
+        if given != p["id_ref"]:
+            return {"ok": False, "error": "id_mismatch"}
+    return {"ok": True, "dob": f"{m.group(3)}/{m.group(2)}/{m.group(1)}", "verified": bool(p.get("id_ref"))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Activity, Droplet, Scale, HeartPulse, Plus, Trash2, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/apiClient";
@@ -39,8 +39,12 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
   const { data: contact } = useQuery({ queryKey: ["patient-contact", patientId], queryFn: () => api<{ height_cm?: number | null }>(`/patients/${encodeURIComponent(patientId)}/contact`), retry: false });
   const heightCm = contact?.height_cm || undefined;
   const [h, setH] = useState("");
+  const hRef = useRef<HTMLInputElement>(null);
+  // ύψος σε μέτρα («1,75») → cm· «175» γραμμένο σε cm γίνεται δεκτό κι αυτό
+  const toCm = (s: string) => { const v = numParse(s); return v > 3 ? Math.round(v) : Math.round(v * 100); };
+  const putHeight = (s: string) => api(`/patients/${encodeURIComponent(patientId)}/height`, { method: "PATCH", body: JSON.stringify({ height_cm: s ? toCm(s) : null }) });
   const saveH = useMutation({
-    mutationFn: () => api(`/patients/${encodeURIComponent(patientId)}/height`, { method: "PATCH", body: JSON.stringify({ height_cm: h ? Math.round(numParse(h) * 100) : null }) }),
+    mutationFn: () => putHeight(h),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["patient-contact", patientId] }); setH(""); },
   });
   const [open, setOpen] = useState(false);
@@ -49,9 +53,18 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
   const [at, setAt] = useState(new Date().toISOString().slice(0, 10));
   const [hist, setHist] = useState<string | null>(null);
 
+  // Βάρος χωρίς γνωστό ύψος → το ύψος γράφεται στην ΙΔΙΑ καταχώριση, ώστε ο ΔΜΣ να βγει αμέσως
+  const [addH, setAddH] = useState("");
   const add = useMutation({
-    mutationFn: () => api(`/patients/${encodeURIComponent(patientId)}/measurements`, { method: "POST", body: JSON.stringify(kind === "bp" ? { kind, systolic: bpParse(sys), diastolic: bpParse(dia), at } : { kind, value: numParse(val), at }) }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["patient-measurements", patientId] }); setOpen(false); setSys(""); setDia(""); setVal(""); },
+    mutationFn: async () => {
+      await api(`/patients/${encodeURIComponent(patientId)}/measurements`, { method: "POST", body: JSON.stringify(kind === "bp" ? { kind, systolic: bpParse(sys), diastolic: bpParse(dia), at } : { kind, value: numParse(val), at }) });
+      if (kind === "weight" && addH && numParse(addH) > 0) await putHeight(addH);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["patient-measurements", patientId] });
+      qc.invalidateQueries({ queryKey: ["patient-contact", patientId] });
+      setOpen(false); setSys(""); setDia(""); setVal(""); setAddH("");
+    },
   });
   const del = useMutation({
     mutationFn: (id: string) => api(`/patients/${encodeURIComponent(patientId)}/measurements/${id}`, { method: "DELETE" }),
@@ -71,13 +84,13 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
         <Tile icon={HeartPulse} label={t("Πίεση", "Blood pressure")} value={bp ? `${bpShow(bp.systolic)}/${bpShow(bp.diastolic)}` : "—"} sub={bp ? dmy(bp.at) : t("καμία μέτρηση", "no data")} status={bpStatus(bp?.systolic, bp?.diastolic)} onClick={() => setHist(hist === "bp" ? null : "bp")} />
         <Tile icon={Droplet} label={t("Ζάχαρο", "Glucose")} value={gl ? `${gl.value}` : "—"} sub={gl ? `mg/dL · ${dmy(gl.at)}` : t("καμία μέτρηση", "no data")} status={glStatus(gl?.value)} onClick={() => setHist(hist === "glucose" ? null : "glucose")} />
         <Tile icon={Scale} label={t("Βάρος", "Weight")} value={wt ? wShow(wt.value) : "—"} sub={wt ? `kg · ${dmy(wt.at)}` : t("καμία μέτρηση", "no data")} status="neutral" onClick={() => setHist(hist === "weight" ? null : "weight")} />
-        <Tile icon={Activity} label={t("ΔΜΣ (BMI)", "BMI")} value={bmi ? bmi.toFixed(1) : "—"} sub={heightCm ? `${t("ύψος", "height")} ${mShow(heightCm)}μ` : t("όρισε ύψος →", "set height →")} status={bmiStatus(bmi)} />
+        <Tile icon={Activity} label={t("ΔΜΣ (BMI)", "BMI")} value={bmi ? bmi.toFixed(1) : "—"} sub={heightCm ? `${t("ύψος", "height")} ${mShow(heightCm)}μ` : t("όρισε ύψος →", "set height →")} status={bmiStatus(bmi)} onClick={() => hRef.current?.focus()} />
       </div>
 
       {/* ύψος — σταθερό σωματομετρικό (για BMI) */}
       <div className="mt-2 flex items-center gap-2 text-sm">
         <span className="text-xs text-slate-500">{t("Ύψος (μ)", "Height (m)")}:</span>
-        <input type="text" inputMode="decimal" value={h} onChange={(e) => setH(e.target.value)} placeholder={heightCm ? mShow(heightCm) : "1,75"}
+        <input ref={hRef} type="text" inputMode="decimal" value={h} onChange={(e) => setH(e.target.value)} placeholder={heightCm ? mShow(heightCm) : "1,75"}
           className="w-24 rounded-lg border border-slate-300 px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-800" />
         <button onClick={() => saveH.mutate()} disabled={saveH.isPending || !h} className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700">{t("Αποθήκευση", "Save")}</button>
       </div>
@@ -94,6 +107,9 @@ export function MeasurementsCard({ patientId }: { patientId: string }) {
               </>
             ) : (
               <label className="text-xs text-slate-500">{kind === "glucose" ? "mg/dL" : "kg"}<input type="text" inputMode="decimal" placeholder={kind === "weight" ? "85,30" : ""} value={val} onChange={(e) => setVal(e.target.value)} className={`mt-0.5 block w-24 ${inp}`} /></label>
+            )}
+            {kind === "weight" && !heightCm && (
+              <label className="text-xs text-slate-500">{t("Ύψος (μ) — για ΔΜΣ", "Height (m) — for BMI")}<input type="text" inputMode="decimal" placeholder="1,75" value={addH} onChange={(e) => setAddH(e.target.value)} className={`mt-0.5 block w-24 ${inp}`} /></label>
             )}
             <label className="text-xs text-slate-500">{t("Ημ/νία", "Date")}<input type="date" value={at} onChange={(e) => setAt(e.target.value)} className={`mt-0.5 block ${inp}`} /></label>
             <button onClick={() => add.mutate()} disabled={add.isPending || !canSave} className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50">{t("Καταχώρηση", "Save")}</button>

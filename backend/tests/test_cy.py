@@ -562,9 +562,37 @@ async def test_cy_portal_customer_side(mem, monkeypatch):
     link = await mem["patient_links"].find_one({"account_id": acc["_id"]})
     ctx = PatientContext(account_id=str(acc["_id"]), tenant_id=CY, patient_ref=str(link["patient_ref"]))
 
-    rx = await pr.cy_prescriptions(for_ref=None, ctx=ctx)
-    assert len(rx["history"]) == 1 and rx["history"][0]["lines"][0]["description"].startswith("JIVOLAR")
-    assert rx["open"] == [], "6/6 → καμία ανοιχτή"
+    # ΙΔΙΑ endpoints & σχήματα με την ελληνική πύλη (Αρχική/Συνταγές/Επαναλήψεις/Ανεκτέλεστα)
+    rx = (await pr.my_prescriptions(ctx=ctx))["items"]
+    assert len(rx) == 1 and rx[0]["barcode"] == "22222222" and rx[0]["medicines"][0].startswith("JIVOLAR")
+    assert rx[0]["repeat_current"] == 6 and rx[0]["next_open_date"] is None, "6/6 → καμία επόμενη"
+    assert {"patient_share", "partial", "pending", "tenant_id", "pharmacy_name"} <= set(rx[0])
+    assert (await pr.my_repeats(for_ref=None, ctx=ctx))["items"] == []
+    assert (await pr.my_renewals(for_ref=None, tenant_id=None, ctx=ctx))["items"] == []
+    # ίδια συνταγή, νέα (2/6) εκτέλεση πριν 25 ημέρες → αναμένεται σε 3 → Επαναλήψεις + Ανεκτέλεστα
+    from datetime import datetime, timedelta
+
+    from app.services.cy.importer import import_files
+    ts = (datetime.now() - timedelta(days=25)).strftime("%Y-%m-%d 10:00:00 +0200")
+    x = (DRUG_XML.replace("<PrescriptionId>11111111", "<PrescriptionId>R77").replace("<DispensingId>22222222", "<DispensingId>D77")
+         .replace("2026-11-17 09:05:18 +0200", ts).replace("<CurrentDispInstance>6<", "<CurrentDispInstance>2<"))
+    await import_files(CY, [("b.xml", x.encode())], pepper="p")
+    rx = (await pr.my_prescriptions(ctx=ctx))["items"]
+    assert [r["barcode"] for r in rx] == ["22222222", "D77"], "νεότερη πρώτη (17/11 πριν από πριν-25-ημέρες)"
+    assert rx[1]["next_open_date"] and rx[1]["repeat_root"] == "R77"
+    rep = (await pr.my_repeats(for_ref=None, ctx=ctx))["items"]
+    assert [r["barcode"] for r in rep] == ["R77"] and rep[0]["medicines"][0]["dosage"]
+    ren = (await pr.my_renewals(for_ref=None, tenant_id=None, ctx=ctx))["items"]
+    assert [r["key"] for r in ren] == ["R77"] and ren[0]["intent"] is None
+    await pr.respond_renewal(pr.RenewalRespondIn(key="R77", decision="take", visit_date="2026-12-01"), ctx=ctx)
+    ren = (await pr.my_renewals(for_ref=None, tenant_id=None, ctx=ctx))["items"]
+    assert ren[0]["intent"]["decision"] == "take", "«θα το πάρω» φαίνεται ξανά"
+    det = await pr.prescription_detail("D77", tenant_id=None, for_ref=None, ctx=ctx)
+    assert det["amount_total"] > 0 and det["items"][0]["is_executed"] and det["icd10"] == []
+    assert (await pr.prescription_detail("R77", tenant_id=None, for_ref=None, ctx=ctx))["barcode"] == "D77", \
+        "από τις Επαναλήψεις (αρ. συνταγής) → η τελευταία εκτέλεση"
+    s = await pr.my_summary(for_ref=None, ctx=ctx)
+    assert s["rx_count"] == 2 and s["repeats_active"] == 1 and s["covered_cents"] + s["paid_cents"] <= s["total_cents"]
     # αιτήματα (ραντεβού/διαθεσιμότητα) ΜΟΝΟ στο δικό του φαρμακείο
     try:
         await pr._target(ctx, GR)
@@ -578,11 +606,8 @@ async def test_cy_portal_customer_side(mem, monkeypatch):
     # ελληνικός λογαριασμός → το κυπριακό endpoint δεν υπάρχει (404, ποτέ 403)
     await mem["patient_accounts"].insert_one({"email": "gr@x.gr", "amka": "12345678901"})
     gr = await mem["patient_accounts"].find_one({"email": "gr@x.gr"})
-    try:
-        await pr.cy_prescriptions(for_ref=None, ctx=PatientContext(account_id=str(gr["_id"]), tenant_id=GR, patient_ref="x"))
-        raise AssertionError("ελληνικός λογαριασμός είδε κυπριακές συνταγές")
-    except HTTPException as exc:
-        assert exc.status_code == 404
+    gctx = PatientContext(account_id=str(gr["_id"]), tenant_id=GR, patient_ref="x")
+    assert await pr._cy_pseudo(gctx, GR, "x") is None, "ελληνικός λογαριασμός → ελληνικός δρόμος, ανέγγιχτος"
 
 
 # ── Ομοιότητα με την Ελλάδα: Dashboard, εκτελέσεις, πελάτες, γιατρός, Εικόνα Πελάτη ─────────
@@ -2477,3 +2502,32 @@ def test_locked_addon_blocks_cy_screen():
 def _pt_raises(exc):
     import pytest as _p
     return _p.raises(exc)
+
+
+async def test_cy_portal_qr_checks_id_without_storing_it(mem, monkeypatch):
+    """QR για το φαρμακείο (24/11/2026): [ταυτότητα]+Tab+[ΗΗ/ΜΜ/ΕΕΕΕ]. Ο αριθμός ελέγχεται με ψευδώνυμα και
+    ΔΕΝ αποθηκεύεται ποτέ· επιστρέφεται μόνο η ημ. γέννησης του ίδιου."""
+    from fastapi import HTTPException
+
+    from app.api.v1.routers import cy as cy_router
+    from app.api.v1.routers import patient as pr
+    from app.core.deps import PatientContext
+    ref = await _portal_setup(mem, monkeypatch)
+    await cy_router.portal_invite(ref, cy_router.PortalInviteIn(doc_type="NID", doc_number="999001", email="q@r.cy"), _Ctx(CY))
+    acc = await mem["patient_accounts"].find_one({"email": "q@r.cy"})
+    link = await mem["patient_links"].find_one({"account_id": acc["_id"]})
+    ctx = PatientContext(account_id=str(acc["_id"]), tenant_id=CY, patient_ref=str(link["patient_ref"]))
+    ok = await pr.cy_qr_check(pr.CyQrIn(doc_type="NID", doc_number="0000999001"), ctx)
+    assert ok == {"ok": True, "dob": "31/12/1959", "verified": True}
+    assert (await pr.cy_qr_check(pr.CyQrIn(doc_type="NID", doc_number="123456"), ctx))["error"] == "id_mismatch"
+    assert (await pr.cy_qr_check(pr.CyQrIn(doc_type="ARC", doc_number="0000999001"), ctx))["error"] == "id_mismatch"
+    for coll in ("cy_patients", "patient_accounts", "patient_links"):
+        async for d in mem[coll].find({}):
+            assert "0000999001" not in repr(d) and "999001" not in repr(d).replace("0000999001", ""), coll
+    await mem["patient_accounts"].insert_one({"email": "gr2@x.gr", "amka": "12345678902"})
+    gr = await mem["patient_accounts"].find_one({"email": "gr2@x.gr"})
+    try:
+        await pr.cy_qr_check(pr.CyQrIn(doc_number="999001"), PatientContext(account_id=str(gr["_id"]), tenant_id=GR, patient_ref="x"))
+        raise AssertionError("ελληνικός λογαριασμός")
+    except HTTPException as exc:
+        assert exc.status_code == 404
