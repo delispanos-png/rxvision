@@ -531,14 +531,26 @@ class HdikaClient:
         # executionDate search returns a multi-day window, so day-by-day stepping re-sees the
         # same executions; dedup on (barcode, executionNo) so each repeat is fetched once, and
         # cache each barcode's CDA (shared by all its repeats) → one CDA fetch per prescription.
+        # ΜΕΤΡΗΜΕΝΟ 25/11/2026: η αναζήτηση `executionDate=Χ` επιστρέφει ΟΛΟ ΤΟΝ ΜΗΝΑ του Χ (π.χ. 15/12 →
+        # 1.783 εκτελέσεις 01–31/12, 18 σελίδες). Το βήμα-ανά-ημέρα ξανακατέβαζε τον ίδιο μήνα ~30 φορές
+        # χωρίς τίποτα νέο → κανένα heartbeat για λεπτά → ο watchdog σκότωνε τα backfills ως «stalled» και
+        # η πρόοδος έμενε ακίνητη. Τώρα: όποια ημέρα ΚΑΛΥΦΘΗΚΕ ήδη από ΠΛΗΡΗ απάντηση (όλες οι σελίδες
+        # ΟΚ, και η ζητούμενη ημέρα μέσα στο εύρος ημερομηνιών της) δεν ξαναζητείται. Αν η ΗΔΥΚΑ γυρίσει
+        # σε σημασιολογία «μίας ημέρας», το εύρος = εκείνη η ημέρα → συμπεριφορά ίδια με πριν.
+        covered: list[tuple] = []
         seen: set = set()
         cda_cache: dict = {}
         day = end                       # most-recent day first → recent analytics/forecast fill fast
         while day >= start:
+            if any(lo <= day <= hi for lo, hi in covered):
+                day -= timedelta(days=1)
+                continue
             # repeat info for THIS day only — interleaved so a big backfill streams
             # results immediately instead of waiting on one huge upfront sweep.
             summaries = self._prescription_index(day, day)
             page = 0
+            complete = False
+            dates: set = set()
             while True:
                 params = {"size": _PAGE_SIZE, "page": page,
                           "executionDate": day.isoformat()}
@@ -560,6 +572,12 @@ class HdikaClient:
                     bc = str(_first(presc, "barcode") or _first(raw, "barcode", default=""))
                     execno = int(float(_first(raw, "executionNo", default=1) or 1))
                     key = (bc, execno)
+                    ed = _first(raw, "executionDate", "executed_at")
+                    if ed:
+                        try:
+                            dates.add(datetime.fromisoformat(str(ed).replace("Z", "+00:00")).date())
+                        except ValueError:
+                            pass
                     if not bc or key in seen:        # overlapping day-windows → skip re-seen executions
                         continue
                     seen.add(key)
@@ -579,8 +597,18 @@ class HdikaClient:
                 for raw, bc in todo:
                     yield self._map_full(raw, cda_cache.get(bc, {}), summaries.get(bc, {}))
                 if self._is_last(data, len(records)):
+                    complete = True
                     break
                 page += 1
+            if complete and dates:
+                lo, hi = min(dates), max(dates)
+                # Πολυήμερη απάντηση (αποδεδειγμένα όχι «μόνο η ημέρα») μέσα στον μήνα της ημέρας → όλος ο
+                # μήνας είναι καλυμμένος (και οι ημέρες χωρίς εκτελέσεις στις άκρες: Κυριακές/αργίες).
+                if lo < hi and all((d.year, d.month) == (day.year, day.month) for d in dates):
+                    lo = day.replace(day=1)
+                    hi = (lo + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+                if lo <= day <= hi:
+                    covered.append((lo, hi))
             day -= timedelta(days=1)
 
     def search_keys(self, day) -> set:

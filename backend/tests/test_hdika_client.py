@@ -190,3 +190,53 @@ def test_gateway_outage_pages_are_transient_not_auth():
     assert is_auth is False
     login = "<html><body>Login required — you must login. Secured by an Application Gateway</body></html>"
     assert _gateway_message(login)[1] is True          # ο ληγμένος κωδικός ΣΥΝΕΧΙΖΕΙ να παγώνει
+
+
+def _month_feed(monkeypatch, c, *, month_semantics: bool):
+    """Ψεύτικη ΗΔΥΚΑ: `executionDate=Χ` → ΟΛΟΣ ο μήνας του Χ (μετρημένη συμπεριφορά 25/11/2026) ή
+    μόνο η ημέρα Χ. Επιστρέφει τη λίστα των ημερών που ζητήθηκαν."""
+    from datetime import date as _d
+
+    asked: list = []
+
+    def _get_xml(path, params):
+        x = _d.fromisoformat(params["executionDate"])
+        asked.append(x)
+        days = [x.replace(day=k) for k in (1, 10, 20)] if month_semantics else [x]
+        return {"content": [{"prescription": {"barcode": f"B{d.isoformat()}"}, "executionNo": 1,
+                             "executionDate": f"{d.isoformat()}T10:00:00"} for d in days],
+                "last": "true"}
+
+    monkeypatch.setattr(c, "authenticate", lambda: None)
+    monkeypatch.setattr(c, "_get_xml", _get_xml)
+    monkeypatch.setattr(c, "_prescription_index", lambda a, b: {})
+    monkeypatch.setattr(c, "_fetch_cda", lambda bc: {})
+    monkeypatch.setattr(c, "_map_full", lambda raw, cda, s: raw["prescription"]["barcode"])
+    monkeypatch.setattr("app.services.ingestion.hdika_client._to_dict", lambda d: d)
+    return asked
+
+
+def test_iter_executions_skips_days_already_covered_by_a_month_response(monkeypatch):
+    """Η ΗΔΥΚΑ δίνει όλο τον μήνα σε κάθε ημέρα → ΜΙΑ αναζήτηση ανά μήνα (όχι ~30 ίδιες) — αλλιώς ο
+    watchdog σκότωνε τα backfills ως «stalled» (pharmacy-295, 25/11/2026)."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    c = HdikaClient({"base_url": "https://x", "username": "u", "password": "p", "api_key": "k",
+                     "pharmacy_id": "1"})
+    asked = _month_feed(monkeypatch, c, month_semantics=True)
+    got = list(c.iter_executions(_dt(2025, 11, 5, tzinfo=_tz.utc), _dt(2026, 1, 15, tzinfo=_tz.utc)))
+    assert [d.isoformat() for d in asked] == ["2026-01-15", "2025-12-31", "2025-11-30"]
+    assert len(got) == 9 and len(set(got)) == 9                  # 3 μήνες × 3 ημέρες, τίποτα διπλό
+    c.close()
+
+
+def test_iter_executions_day_semantics_still_queries_every_day(monkeypatch):
+    """Αν η ΗΔΥΚΑ γυρίσει σε «μόνο η ημέρα», δεν παραλείπεται ΚΑΜΙΑ ημέρα."""
+    from datetime import datetime as _dt, timezone as _tz
+
+    c = HdikaClient({"base_url": "https://x", "username": "u", "password": "p", "api_key": "k",
+                     "pharmacy_id": "1"})
+    asked = _month_feed(monkeypatch, c, month_semantics=False)
+    got = list(c.iter_executions(_dt(2026, 1, 1, tzinfo=_tz.utc), _dt(2026, 1, 10, tzinfo=_tz.utc)))
+    assert len(asked) == 10 and len(got) == 10
+    c.close()

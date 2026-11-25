@@ -88,6 +88,7 @@ class IngestionEngine:
         if window and window[0] and window[1]:
             span = abs((window[1] - window[0]).total_seconds()) or None
         first_cursor: object = None
+        far = 0.0
         cancelled = False
         await self.db["sync_jobs"].insert_one({
             "_id": job_id, "tenant_id": self.tenant_id, "source": source, "type": job_type,
@@ -125,7 +126,11 @@ class IngestionEngine:
                     if cur is not None:
                         upd["cursor_date"] = cur
                         if span and first_cursor is not None:
-                            upd["progress"] = min(1.0, abs((cur - first_cursor).total_seconds()) / span)
+                            # ΜΟΝΟ προς τα εμπρός: η ΗΔΥΚΑ δίνει έναν ολόκληρο μήνα με τη σειρά που θέλει,
+                            # οπότε το executed_at της τελευταίας εγγραφής πάει μπρος-πίσω → η μπάρα
+                            # «έπεφτε» (7%→5%) και έμοιαζε κολλημένη. Κρατάμε την πιο μακρινή απόσταση.
+                            far = max(far, abs((cur - first_cursor).total_seconds()))
+                            upd["progress"] = min(1.0, far / span)
                     await self.db["sync_jobs"].update_one({"_id": job_id}, {"$set": upd})
                     # cooperative stop: the API sets cancel_requested on this running job
                     j = await self.db["sync_jobs"].find_one({"_id": job_id}, {"cancel_requested": 1})

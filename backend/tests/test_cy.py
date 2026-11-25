@@ -587,8 +587,13 @@ async def test_cy_portal_customer_side(mem, monkeypatch):
     await pr.respond_renewal(pr.RenewalRespondIn(key="R77", decision="take", visit_date="2026-12-01"), ctx=ctx)
     ren = (await pr.my_renewals(for_ref=None, tenant_id=None, ctx=ctx))["items"]
     assert ren[0]["intent"]["decision"] == "take", "«θα το πάρω» φαίνεται ξανά"
+    # βίντεο οδηγιών: ο κατάλογος έχει EAN-13, το ΓεΣΥ GTIN-14 με «0» μπροστά → ίδιο είδος
+    await mem["pharmacy_products"].insert_one({"tenant_id": CY, "barcode": "5290931041882",
+                                               "usage_video_url": "https://youtu.be/abc"})
     det = await pr.prescription_detail("D77", tenant_id=None, for_ref=None, ctx=ctx)
     assert det["amount_total"] > 0 and det["items"][0]["is_executed"] and det["icd10"] == []
+    assert det["items"][0]["barcode"] == "05290931041882"
+    assert det["items"][0]["usage_video_url"] == "https://youtu.be/abc", "βίντεο παρά τη διαφορετική μορφή barcode"
     assert (await pr.prescription_detail("R77", tenant_id=None, for_ref=None, ctx=ctx))["barcode"] == "D77", \
         "από τις Επαναλήψεις (αρ. συνταγής) → η τελευταία εκτέλεση"
     s = await pr.my_summary(for_ref=None, ctx=ctx)

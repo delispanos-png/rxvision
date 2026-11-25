@@ -98,8 +98,14 @@ async def detail(tenant_id: str, pseudo: str | None, barcode: str, *, demo: bool
             "quantity": int(ln.get("qty_presc") or given or 1),
             "retail_price": int((ln.get("amounts") or {}).get("total") or 0),
             "is_executed": given > 0, "executed_qty": given,
-            "dosage": _dosage_text(ln.get("dosage") or {}), "details": {}, "usage_video_url": None,
+            "dosage": _dosage_text(ln.get("dosage") or {}), "details": {},
         })
+    # Βίντεο οδηγιών χρήσης του είδους (όπως στην Ελλάδα) — ίδια πηγή: `product_video_map`
+    from app.core.db import shared_db
+    from app.repositories.patient_portal import product_video_map
+    vmap = await product_video_map(shared_db(), tenant_id, [i.get("barcode") for i in items])
+    for i in items:
+        i["usage_video_url"] = vmap.get(str(i.get("barcode") or "").strip()) if i.get("barcode") else None
     out.update({"amount_total": int((d.get("totals") or {}).get("total") or 0), "details": {}, "items": items})
     return jsonsafe(out)
 

@@ -127,14 +127,23 @@ def _format_dosage(dose, freq, dur) -> str | None:
 async def product_video_map(db, tenant_id: str, barcodes) -> dict:
     """{barcode: usage_video_url} για όσα φάρμακα/είδη έχει βάλει ο φαρμακοποιός βίντεο οδηγιών χρήσης
     (πεδίο `usage_video_url` του είδους στο pharmacy_products). Batch lookup με tenant scope."""
-    bcs = list({str(b) for b in (barcodes or []) if b})
-    if not bcs:
+    # Ίδιο είδος, άλλη μορφή barcode: το ΓεΣΥ γράφει GTIN-14 («04049001001513»), ο κατάλογος EAN-13
+    # («4049001001513») — ταίριασμα ΧΩΡΙΣ τα αρχικά μηδενικά, κλειδί = το barcode όπως ζητήθηκε.
+    want: dict[str, str] = {}
+    for b in barcodes or []:
+        s = str(b or "").strip()
+        if s and s.lstrip("0"):
+            want.setdefault(s.lstrip("0"), s)
+    if not want:
         return {}
+    variants = {v for k in want for v in (k, "0" + k, k.zfill(13), k.zfill(14))}
     out: dict = {}
     async for p in db["pharmacy_products"].find(
-            {"tenant_id": tenant_id, "barcode": {"$in": bcs}, "usage_video_url": {"$nin": [None, ""]}},
+            {"tenant_id": tenant_id, "barcode": {"$in": list(variants)}, "usage_video_url": {"$nin": [None, ""]}},
             {"barcode": 1, "usage_video_url": 1}):
-        out[str(p.get("barcode"))] = p.get("usage_video_url")
+        asked = want.get(str(p.get("barcode") or "").lstrip("0"))
+        if asked:
+            out[asked] = p.get("usage_video_url")
     return out
 
 
