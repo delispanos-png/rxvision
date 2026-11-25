@@ -34,7 +34,11 @@ export default function PortalLogin() {
       patientTokens.set(s.access_token ?? null, s.refresh_token ?? "");
       router.replace(s.must_change_password ? "/portal/set-password" : "/portal");
     } catch (e) {
+      const pd: { error?: string } = e instanceof ApiError ? ((e.problem as { detail?: { error?: string } } | null)?.detail ?? {}) : {};
       setErr(e instanceof ApiError && e.status === 401 ? t("Λάθος email ή κωδικός.", "Wrong email or password.")
+        : e instanceof ApiError && e.status === 403 && pd.error === "account_locked"
+          ? t("Ο λογαριασμός κλειδώθηκε προσωρινά επειδή εντοπίστηκε αυτοματοποιημένη πρόσβαση. Επικοινωνήστε με το φαρμακείο σας.",
+              "Your account was temporarily locked because automated access was detected. Please contact your pharmacy.")
         : e instanceof ApiError && e.status === 429
           ? t("Πολλές προσπάθειες σύνδεσης. Περιμένετε λίγα λεπτά και δοκιμάστε ξανά.", "Too many attempts. Wait a few minutes and try again.")
           : t("Κάτι πήγε στραβά.", "Something went wrong."));

@@ -181,6 +181,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.dispatch_incremental_sync",
         "schedule": crontab(minute="*/5"),
     },
+    "access-aggregate": {   # πολιτική πρόσβασης: μετρητές αιτημάτων/λεπτό → ιστόγραμμα (Φάση 0, μέτρηση)
+        "task": "app.workers.sessions.aggregate_access",
+        "schedule": crontab(minute="*/5"),
+    },
     "reap-stalled-sync": {  # watchdog: kill sync jobs with no progress >10min
         "task": "app.workers.ingestion.reap_stalled_sync",
         "schedule": crontab(minute="*/2"),

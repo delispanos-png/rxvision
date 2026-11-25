@@ -92,8 +92,9 @@ async def login(body: LoginIn, request: Request):
 
 
 @router.post("/refresh", response_model=TokenOut)
-async def refresh(body: RefreshIn):
-    tokens = await AuthService().refresh(body.refresh_token)
+async def refresh(body: RefreshIn, request: Request):
+    tokens = await AuthService().refresh(body.refresh_token, user_agent=request.headers.get("user-agent"),
+                                         ip=client_ip(request))
     if tokens is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_refresh")
     return tokens
@@ -111,9 +112,12 @@ class SelectTenantIn(BaseModel):
 
 
 @router.post("/select-tenant", response_model=TokenOut)
-async def select_tenant(body: SelectTenantIn, ctx: TenantContext = Depends(get_current_context)):
+async def select_tenant(body: SelectTenantIn, request: Request,
+                        ctx: TenantContext = Depends(get_current_context)):
     """Δίκτυο φαρμακείων: εναλλαγή ενεργού φαρμακείου — ΜΟΝΟ σε όσα έχουν δηλωθεί στον χρήστη."""
-    res = await AuthService().select_tenant(ctx.user_id, body.tenant_id, sid=ctx.sid)
+    res = await AuthService().select_tenant(ctx.user_id, body.tenant_id, sid=ctx.sid,
+                                            user_agent=request.headers.get("user-agent"),
+                                            ip=client_ip(request))
     if res is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "no_access_to_pharmacy")
     if res.get("seat_limit"):

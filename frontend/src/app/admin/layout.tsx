@@ -8,7 +8,7 @@ import {
   LogOut, PlugZap, Menu, X, Layers, Cloud, ScrollText, Boxes, Settings, ChevronDown,
   ChevronRight, Percent, Brain, Bell, Sparkles, MessageSquare, Activity, ArrowUpCircle,
   Landmark, Bot, Wallet, Smartphone, Network, Database, Clock, FileText, Megaphone,
-  ShieldCheck, FlaskConical, Headset, BadgePercent, Handshake } from "lucide-react";
+  ShieldCheck, ShieldAlert, FlaskConical, Headset, BadgePercent, Handshake } from "lucide-react";
 import { adminApi, adminTokens, ApiError } from "@/lib/adminClient";
 import { PoweredBy } from "@/components/brand/PoweredBy";
 import { LogoMark } from "@/components/brand/Logo";
@@ -75,6 +75,7 @@ const GROUPS: { label: string; icon: typeof LayoutGrid; items: { label: string; 
       { label: "Ειδοποιήσεις", icon: Bell, href: "/admin/notifications", section: "comms:read" },
       { label: "SMS ιδιοκτήτη", icon: Smartphone, href: "/admin/alerts", section: "comms:read" },
       { label: "Αρχείο ενεργειών", icon: ScrollText, href: "/admin/audit-logs", section: "monitoring:audit" },
+      { label: "Πρόσβαση & αυτοματισμοί", icon: ShieldAlert, href: "/admin/access-policy", section: "monitoring:audit" },
     ],
   },
   {

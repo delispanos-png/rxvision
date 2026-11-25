@@ -6,6 +6,7 @@ import { Providers } from "./providers";
 // Self-hosted at build time (no runtime request to Google Fonts → no user-IP leak + tighter CSP).
 const inter = Inter({ subsets: ["latin", "greek"], display: "swap", variable: "--font-inter" });
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
+import { AutomationBeacon } from "@/components/security/AutomationBeacon";
 import { CookieConsent } from "@/components/legal/CookieConsent";
 
 export const metadata: Metadata = {
@@ -39,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="el" className={inter.variable}>
       <body className="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
         <ServiceWorkerRegister />
+        <AutomationBeacon />
         <Providers>{children}</Providers>
         <CookieConsent />
       </body>

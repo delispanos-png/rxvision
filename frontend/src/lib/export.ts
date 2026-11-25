@@ -4,6 +4,7 @@
 
 import { fmtDate } from "./formatters";
 import { exportBlocked } from "./exportGate";
+import { authorizeExport, downloadBlob, noteTruncated, reportExportDone } from "./exportAudit";
 
 export type ExportCol<T> = { key: string; header: string; value?: (row: T) => unknown };
 
@@ -15,19 +16,32 @@ const cell = <T,>(c: ExportCol<T>, r: T): unknown => {
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export async function downloadXlsx<T>(filename: string, columns: ExportCol<T>[], rows: T[]): Promise<void> {
+export async function downloadXlsx<T>(filename: string, columns: ExportCol<T>[], allRows: T[]): Promise<void> {
   if (exportBlocked()) return;
+  // Πολιτική πρόσβασης (Φάση 2): άδεια + καταγραφή + όριο γραμμών + υδατογράφημα. Fail closed.
+  const ticket = await authorizeExport("xlsx", allRows.length);
+  if (!ticket) return;
+  const rows = allRows.slice(0, ticket.max_rows);
   const XLSX = await import("xlsx");
-  const aoa = [columns.map((c) => c.header), ...rows.map((r) => columns.map((c) => cell(c, r)))];
+  const aoa = [[ticket.watermark], columns.map((c) => c.header), ...rows.map((r) => columns.map((c) => cell(c, r)))];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!cols"] = columns.map((c) => ({ wch: Math.max(12, c.header.length + 4) }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "RxVision");
-  XLSX.writeFile(wb, filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
+  wb.Props = { Title: "RxVision", Comments: ticket.watermark, Author: ticket.watermark };
+  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  downloadBlob(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+    filename.endsWith(".xlsx") ? filename : `${filename}.xlsx`);
+  void reportExportDone(ticket, out, rows.length);
+  await noteTruncated(allRows.length, ticket.max_rows);
 }
 
-export async function downloadPdf<T>(filename: string, title: string, columns: ExportCol<T>[], rows: T[]): Promise<void> {
+export async function downloadPdf<T>(filename: string, title: string, columns: ExportCol<T>[], allRows: T[]): Promise<void> {
   if (exportBlocked()) return;
+  // Πολιτική πρόσβασης (Φάση 2): άδεια + καταγραφή + όριο γραμμών + υδατογράφημα. Fail closed.
+  const ticket = await authorizeExport("pdf", allRows.length);
+  if (!ticket) return;
+  const rows = allRows.slice(0, ticket.max_rows);
   const [{ jsPDF }, html2canvas] = await Promise.all([
     import("jspdf"),
     import("html2canvas").then((m) => m.default),
@@ -48,13 +62,15 @@ export async function downloadPdf<T>(filename: string, title: string, columns: E
       <div>
         <div style="font-size:23px;font-weight:800;color:#4f46e5;letter-spacing:-0.5px;">RxVision</div>
         <div style="font-size:15px;color:#334155;margin-top:3px;font-weight:600;">${esc(title)}</div>
+        <div style="font-size:10px;color:#94a3b8;margin-top:3px;">${esc(ticket.watermark)}</div>
       </div>
       <div style="font-size:12px;color:#94a3b8;text-align:right;">${date}<br/>${data.length}${rows.length > MAX ? ` από ${rows.length}` : ""} εγγραφές</div>
     </div>
     <table style="width:100%;border-collapse:collapse;border-radius:8px;overflow:hidden;">
       <thead><tr>${ths}</tr></thead><tbody>${trs}</tbody>
     </table>
-    <div style="margin-top:16px;font-size:10px;color:#cbd5e1;">RxVision · CloudOn — αναλυτικά εκτέλεσης συνταγών</div>`;
+    <div style="margin-top:16px;font-size:10px;color:#94a3b8;">${esc(ticket.watermark)}</div>
+    <div style="margin-top:4px;font-size:10px;color:#cbd5e1;">RxVision · CloudOn — αναλυτικά εκτέλεσης συνταγών</div>`;
   document.body.appendChild(wrap);
   let canvas: HTMLCanvasElement;
   try {
@@ -79,5 +95,9 @@ export async function downloadPdf<T>(filename: string, title: string, columns: E
     y += pxPerPage;
     page += 1;
   }
-  doc.save(filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
+  doc.setProperties({ title: title, subject: ticket.watermark, author: ticket.watermark, creator: "RxVision" });
+  const out = doc.output("arraybuffer");
+  downloadBlob(new Blob([out], { type: "application/pdf" }), filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
+  void reportExportDone(ticket, out, data.length);
+  await noteTruncated(allRows.length, Math.min(ticket.max_rows, MAX));
 }

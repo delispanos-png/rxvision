@@ -638,6 +638,10 @@ class PatientAuthService:
         acc = await self.repo.get_by_email((email or "").strip().lower())
         if not acc or not verify_password(password, acc.get("password_hash", "")):
             return None
+        from app.core.db import shared_db
+        from app.services import access_policy
+        if await access_policy.is_locked(shared_db(), "patient", str(acc["_id"])):
+            return {"account_locked": True}
         if acc.get("twofa_enabled"):
             if not totp:
                 return {"twofa_required": True}
@@ -674,6 +678,10 @@ class PatientAuthService:
             return None
         acc = await self.repo.get(claims.get("sub"))
         if not acc or claims.get("ver", 0) != acc.get("refresh_token_version", 0):
+            return None
+        from app.core.db import shared_db
+        from app.services import access_policy
+        if await access_policy.is_locked(shared_db(), "patient", str(acc["_id"])):
             return None
         sid = claims.get("sid")
         if sid:  # per-session revoke: αν η συνεδρία ανακλήθηκε → απόρριψη refresh (logout συσκευής)

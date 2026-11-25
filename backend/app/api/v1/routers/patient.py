@@ -186,6 +186,9 @@ async def login(body: LoginIn, request: Request):
     if res is None:
         await record_login_failure(f"patient:{body.email}")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid_credentials")
+    if res.get("account_locked"):   # πολιτική πρόσβασης: κλείδωμα λόγω αυτοματισμού
+        from app.services.access_policy import LOCK_MSG
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail={"error": "account_locked", "message": LOCK_MSG})
     if res.get("twofa_required"):   # σωστός κωδικός, χρειάζεται 2ος παράγοντας (ή λάθος TOTP)
         return {"twofa_required": True, "error": res.get("error")}
     await clear_login_failures(f"patient:{body.email}")

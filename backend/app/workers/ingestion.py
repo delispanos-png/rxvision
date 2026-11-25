@@ -908,6 +908,7 @@ def reap_stalled_sync(stall_minutes: int = 10) -> dict:
         client, db = _fresh_db()
         try:
             cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=stall_minutes)
+            nonlocal backfills
             killed: list[str] = []
             cursor = db["sync_jobs"].find(  # tenant-ok: platform stalled-job watchdog (all tenants)
                 {"status": "running", "$or": [
@@ -933,11 +934,24 @@ def reap_stalled_sync(stall_minutes: int = 10) -> dict:
                     {"$set": {"status": "failed", "finished_at": datetime.now(tz=timezone.utc),
                               "error": f"stalled (no progress >{stall_minutes}min) — killed by watchdog"}})
                 killed.append(str(j["_id"]))
-            return {"killed": killed, "count": len(killed)}
+                if j.get("type") == "backfill":
+                    backfills += 1
+            return {"killed": killed, "count": len(killed), "backfills": backfills}
         finally:
             client.close()
 
-    return _run_async(_run())
+    backfills = 0
+    res = _run_async(_run())
+    # ΑΜΕΣΗ συνέχιση ιστορικού (25/11/2026): κάθε deploy ανανεώνει τους workers και κόβει όποιο backfill
+    # τρέχει· πριν, η συνέχιση περίμενε τον γύρο των 20′ του `dispatch_historical_continue` → ένα νέο
+    # φαρμακείο έβλεπε τον συγχρονισμό «σταματημένο» έως ~30′ μετά από κάθε deploy (pharmacy-295). Ο ίδιος
+    # dispatcher (ίδιοι έλεγχοι: floor, retention, «τρέχει ήδη;»), απλώς τώρα.
+    if res.get("backfills"):
+        try:
+            dispatch_historical_continue.delay()
+        except Exception:  # noqa: BLE001 — ο γύρος των 20′ μένει ως δίχτυ
+            pass
+    return res
 
 
 @celery_app.task(name="app.workers.ingestion.gesy_xml_ingest")

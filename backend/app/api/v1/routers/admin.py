@@ -3804,6 +3804,75 @@ async def eshop_fees_charge_now(tenant_id: str, _: PlatformContext = Depends(get
 
 
 
+@router.get("/access-policy")
+async def access_policy_report(days: int = 7, _: PlatformContext = Depends(get_platform_admin)):
+    """Πολιτική πρόσβασης (AI browsers / αυτοματισμοί) — Φάση 0: ρυθμός αιτημάτων ανά χρήστη/λεπτό
+    (p50/p95/p99), κορυφαίοι χρήστες, ύποπτοι user agents. ΜΟΝΟ μέτρηση — κανένα μπλοκ ακόμη."""
+    from app.core.db import shared_db
+    from app.services.access_policy import report
+    return jsonsafe(await report(shared_db(), days=max(1, min(int(days), 30))))
+
+
+class AccessSettingsIn(BaseModel):
+    mode: str | None = Field(None, pattern="^(observe|enforce)$")
+    per_min: int | None = Field(None, ge=1, le=10000)
+    per_hour: int | None = Field(None, ge=1, le=100000)
+    list_per_min: int | None = Field(None, ge=1, le=10000)
+    detail_per_min: int | None = Field(None, ge=1, le=10000)
+    exports_per_day: int | None = Field(None, ge=1, le=1000)
+    export_max_rows: int | None = Field(None, ge=1, le=1000000)
+    strikes_to_lock: int | None = Field(None, ge=1, le=100)
+    strike_window_min: int | None = Field(None, ge=1, le=1440)
+
+
+@router.put("/access-policy/settings")
+async def access_policy_settings(body: AccessSettingsIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Όρια ρυθμού/εξαγωγών + διακόπτης «μέτρηση / επιβολή». Καταγράφεται ποιος άλλαξε τι."""
+    from app.core.db import shared_db
+    from app.services import access_limits
+    from app.services.access_policy import record
+    data = body.model_dump(exclude_none=True)
+    val = await access_limits.save_settings(shared_db(), data, admin_id=str(ctx.admin_id))
+    await record("settings_changed", kind="admin", uid=str(ctx.admin_id), extra={"changes": data})
+    return val
+
+
+class TenantLimitsIn(BaseModel):
+    limits: dict = Field(default_factory=dict)
+
+
+@router.put("/access-policy/tenants/{tenant_id}/limits")
+async def access_policy_tenant_limits(tenant_id: str, body: TenantLimitsIn,
+                                      ctx: PlatformContext = Depends(get_platform_admin)):
+    """Όρια ανά φαρμακείο — ΜΟΝΟ αυστηρότερα από της πλατφόρμας (τα χαλαρότερα αγνοούνται)."""
+    from app.core.db import shared_db
+    from app.services import access_limits
+    from app.services.access_policy import record
+    db = shared_db()
+    if not await db["tenants"].find_one({"_id": tenant_id}, {"_id": 1}):
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "tenant_not_found")
+    own = access_limits.stricter_only(await access_limits.settings(db, fresh=True), body.limits)
+    await db["tenants"].update_one({"_id": tenant_id}, {"$set": {"access_limits": own}})
+    access_limits._tcache.pop(tenant_id, None)
+    await record("settings_changed", kind="admin", uid=str(ctx.admin_id), tid=tenant_id, extra={"tenant_limits": own})
+    return {"tenant_id": tenant_id, "limits": own}
+
+
+class UnlockIn(BaseModel):
+    reason: str = Field(..., min_length=5, max_length=500)
+
+
+@router.post("/access-policy/locks/{lock_id}/unlock")
+async def access_policy_unlock(lock_id: str, body: UnlockIn, ctx: PlatformContext = Depends(get_platform_admin)):
+    """Ξεκλείδωμα λογαριασμού που κλειδώθηκε για αυτοματοποιημένη πρόσβαση — ΜΟΝΟ με αιτιολογία
+    (π.χ. «μίλησα με τον φαρμακοποιό, δοκίμαζε εργαλείο»). Καταγράφεται ποιος & γιατί."""
+    from app.core.db import shared_db
+    from app.services.access_policy import unlock
+    if not await unlock(shared_db(), lock_id, admin_id=str(ctx.admin_id), reason=body.reason.strip()):
+        raise HTTPException(http_status.HTTP_404_NOT_FOUND, "lock_not_found")
+    return {"ok": True}
+
+
 @router.get("/sync-health")
 async def sync_health(_: PlatformContext = Depends(get_platform_admin)):
     """Latest ingestion sync per (tenant, source) + Vault health + silent-failure detection.

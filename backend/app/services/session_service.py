@@ -63,8 +63,11 @@ async def open_session(tenant_id: str, user_id: str, *, sid: str | None = None,
     """Create (or revive, when `sid` is given) a session and return its id."""
     sid = sid or uuid.uuid4().hex
     now = _now()
-    setf = {"tenant_id": tenant_id, "user_id": user_id, "last_active_at": now,
-            "ua": (ua or "")[:200]}
+    setf = {"tenant_id": tenant_id, "user_id": user_id, "last_active_at": now}
+    # UA ΜΟΝΟ όταν τον ξέρουμε: πριν, κάθε refresh (χωρίς UA) τον ΣΒΗΝΕ με "" → 521/608 συνεδρίες χωρίς
+    # user agent, τυφλός ο έλεγχος για AI browsers / αυτοματισμούς (πολιτική πρόσβασης 25/11/2026).
+    if ua:
+        setf["ua"] = ua[:200]
     if ip:
         setf["ip"] = ip[:64]
     # ⚠ Το `impersonation` ορίζεται ΜΟΝΟ στη ΓΕΝΝΗΣΗ της συνεδρίας ($setOnInsert) — ΠΟΤΕ σε revive/
@@ -88,7 +91,8 @@ async def _log_open(sid: str, tenant_id: str, user_id: str, now, *, ua, ip, impe
     try:
         await shared_db()[LOG].update_one({"_id": sid}, {
             "$set": {"tenant_id": tenant_id, "user_id": str(user_id),
-                     "last_seen_at": now, "ua": (ua or "")[:200], **({"ip": ip[:64]} if ip else {})},
+                     "last_seen_at": now, **({"ua": ua[:200]} if ua else {}),
+                     **({"ip": ip[:64]} if ip else {})},
             "$setOnInsert": {"started_at": now, "impersonation": bool(impersonation),
                              "ended_at": None, "ended_reason": None},
         }, upsert=True)

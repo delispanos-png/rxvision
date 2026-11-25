@@ -391,6 +391,10 @@ _ADMIN: dict[tuple[str, str], str] = {
     ("GET", "/session-history"): "monitoring:sessions",
     ("POST", "/sessions/{sid}/revoke"): "monitoring:session_revoke",
     ("GET", "/audit-logs"): "monitoring:audit",
+    ("GET", "/access-policy"): "monitoring:audit",
+    ("POST", "/access-policy/locks/{lock_id}/unlock"): "monitoring:session_revoke",
+    ("PUT", "/access-policy/settings"): "monitoring:session_revoke",
+    ("PUT", "/access-policy/tenants/{tenant_id}/limits"): "monitoring:session_revoke",
 
     # σύστημα
     ("GET", "/staff"): "staff:read",

@@ -20,3 +20,23 @@ def sweep() -> dict:
         return await sessions.sweep()
 
     return asyncio.run(_run())
+
+
+@celery_app.task(name="app.workers.sessions.aggregate_access")
+def aggregate_access() -> int:
+    """Πολιτική πρόσβασης (Φάση 0): μεταφέρει τους μετρητές αιτημάτων/λεπτό από το Redis στη Mongo."""
+    import redis.asyncio as aioredis
+
+    from app.core.config import settings
+    from app.services.access_policy import aggregate
+    from app.workers.ingestion import _fresh_db, _run_async
+
+    async def _run() -> int:
+        _, db = _fresh_db()
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
+            return await aggregate(db, r=r)
+        finally:
+            await r.aclose()
+
+    return _run_async(_run())

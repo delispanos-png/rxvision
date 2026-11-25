@@ -51,6 +51,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(AuditMiddleware)
+    # Πολιτική πρόσβασης: 403 σε AI browsers/αυτοματισμούς + κλείδωμα + μέτρηση. Βλ. services/access_policy.py
+    from app.services.access_policy import AccessGuardMiddleware
+    app.add_middleware(AccessGuardMiddleware)
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
     # PARTNER API — ΞΕΧΩΡΙΣΤΗ εφαρμογή, δικό της OpenAPI schema.

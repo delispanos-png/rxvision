@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends
 
 from app.core.deps import require_padmin
 from app.api.v1.routers import (
+    access,
+    access_exports,
     hdika_link,
     cy,
     addons,
@@ -65,6 +67,8 @@ from app.api.v1.routers import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
+api_router.include_router(access.router, prefix="/access", tags=["access"])
+api_router.include_router(access_exports.router, prefix="/access", tags=["access"])
 api_router.include_router(calendar.router, prefix="/calendar", tags=["calendar"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(public_config.router, prefix="/config", tags=["public"])

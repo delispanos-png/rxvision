@@ -130,7 +130,9 @@ export default function LoginPage() {
         }
       } else if (e instanceof ApiError && e.status === 403 && detail.error === "access_blocked") {
         setServerError(
-          "Ο λογαριασμός σας είναι σε αναστολή. Επικοινωνήστε μαζί μας."
+          detail.reason === "account_locked" && detail.message
+            ? detail.message   // πολιτική πρόσβασης: κλείδωμα λόγω αυτοματοποιημένης πρόσβασης
+            : "Ο λογαριασμός σας είναι σε αναστολή. Επικοινωνήστε μαζί μας."
         );
       } else {
         setServerError(

@@ -127,6 +127,10 @@ class AuthService:
         user = await db["users"].find_one({"email": email, "status": "active"})
         if not user or not verify_password(password, user["password_hash"]):
             return None
+        # Πολιτική πρόσβασης: κλειδωμένος λόγω αυτοματισμού → ΚΑΜΙΑ σύνδεση ως το ξεκλείδωμα από admin.
+        from app.services import access_policy
+        if await access_policy.is_locked(db, "tenant", str(user["_id"])):
+            return {"access_blocked": True, "reason": "account_locked", "message": access_policy.LOCK_MSG}
         # Enforce subscription/tenant access (kept fresh locally) —
         # a suspended/expired tenant cannot log in, no external call at login time.
         _state = await self._access_state(user["tenant_id"])
@@ -171,7 +175,8 @@ class AuthService:
                         "primary": tid == str(user["tenant_id"])})
         return out
 
-    async def select_tenant(self, user_id: str, tenant_id: str, sid: str | None = None) -> dict | None:
+    async def select_tenant(self, user_id: str, tenant_id: str, sid: str | None = None, *,
+                            user_agent: str | None = None, ip: str | None = None) -> dict | None:
         """Εναλλαγή ενεργού φαρμακείου για χρήστη ΔΙΚΤΥΟΥ (π.χ. ιδιοκτήτης 5 φαρμακείων).
 
         Η απομόνωση δεν σπάει: το νέο token κουβαλά ΕΝΑ `tid` — απλά άλλο. Επιτρέπεται μόνο σε
@@ -191,7 +196,7 @@ class AuthService:
         if not await sessions.has_free_seat(tid, sessions.tenant_seats(sub)):
             return {"seat_limit": True, "seats": sessions.tenant_seats(sub)}
         await sessions.close_session(sid)
-        new_sid = await sessions.open_session(tid, str(user["_id"]))
+        new_sid = await sessions.open_session(tid, str(user["_id"]), ua=user_agent, ip=ip)
         modules, roles, perms, demo, mtrl = await self._resolve(user, tid)
         res = self._issue(user, roles, modules, perms, demo, sid=new_sid, tid=tid, mtrl=mtrl)
         res["active_tenant"] = tid
@@ -219,7 +224,8 @@ class AuthService:
             return "expired"
         return "ok"                              # active · trial · past_due → πρόσβαση
 
-    async def refresh(self, refresh_token: str) -> dict | None:
+    async def refresh(self, refresh_token: str, *, user_agent: str | None = None,
+                      ip: str | None = None) -> dict | None:
         try:
             claims = decode_token(refresh_token)
         except ValueError:
@@ -228,6 +234,9 @@ class AuthService:
             return None
         db = shared_db()
         user = await db["users"].find_one({"_id": _as_object_id(claims["sub"])})
+        from app.services import access_policy
+        if user and await access_policy.is_locked(db, "tenant", str(user["_id"])):
+            return None
         if not user or user.get("refresh_token_version") != claims.get("ver"):
             return None  # revoked
         # Keep the SAME session across a refresh (no new seat). If it lapsed (idle → TTL-reaped),
@@ -248,7 +257,7 @@ class AuthService:
         # Adopt/revive/refresh the session. Legacy refresh tokens minted before the seat system
         # carry no sid → open_session(sid=None) gives them a fresh TRACKED session so they can no
         # longer refresh forever outside the cap (closes the pre-`sid` escape without a mass logout).
-        sid = await sessions.open_session(tid, str(user["_id"]), sid=sid)
+        sid = await sessions.open_session(tid, str(user["_id"]), sid=sid, ua=user_agent, ip=ip)
         modules, roles, perms, demo, mtrl = await self._resolve(user, tid)
         return self._issue(user, roles, modules, perms, demo, sid=sid, tid=tid, mtrl=mtrl)
 
