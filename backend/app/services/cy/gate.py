@@ -91,9 +91,11 @@ CY_ROUTE_MODULES: dict[str, tuple[str, ...]] = {
     "patients": _PATIENTS, "lost-customers": ("patient_analytics",), "consumables": ("patient_analytics",),
     "campaigns": ("patient_analytics",),          # ίδιο με το ελληνικό «Καμπάνιες»
     "doctors": ("doctor_analytics",), "profitability": ("profitability",), "loans": ("advance_dispensing",),
+    "loyalty": ("loyalty",),                      # ταυτοποίηση μέλους με το QR ΓεΣΥ
 }
 # Χωρίς πρόσθετο: η ΤΡΟΦΟΔΟΣΙΑ δεδομένων (όπως η σύνδεση ΗΔΥΚΑ στην Ελλάδα).
-CY_ROUTE_FREE = frozenset({"import", "pharmacyone"})
+CY_ROUTE_FREE = frozenset({"import", "pharmacyone",
+                           "suppliers"})          # «Οι φαρμακαποθήκες μου»: ρύθμιση (Πρόταση παραγγελίας + Αποθήκη)
 
 
 def route_key(path: str) -> str:

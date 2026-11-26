@@ -53,6 +53,10 @@ class RegisterIn(BaseModel):
     amka: str = Field(..., min_length=6, max_length=20)
     password: str = Field(..., min_length=8, max_length=128)
     pharmacy: str | None = Field(None, max_length=40)   # «αγαπημένο» tenant from a counter QR
+    accept_terms: bool = False                          # όροι + ενημέρωση απορρήτου πύλης (υποχρεωτικό)
+    health_data: bool = False                           # άρθρο 9 ΓΚΠΔ (υποχρεωτικό)
+    marketing: bool = False                             # προωθητικά (προαιρετικό)
+    channels: dict[str, bool] = Field(default_factory=dict)   # email/sms/viber/push
 
 
 class RegisterVerifyIn(BaseModel):
@@ -149,9 +153,13 @@ async def register(body: RegisterIn):
     """Step 1: send an ownership-proof OTP to a contact the pharmacy holds on file for this ΑΜΚΑ.
     Returns {otp_required, challenge_id, channels}. No account is created until the code is verified."""
     try:
+        from app.services.patient_auth_service import signup_consents
+        consents = signup_consents(accept_terms=body.accept_terms, health_data=body.health_data,
+                                   marketing=body.marketing, channels=body.channels, source="portal_register")
         return await PatientAuthService().start_registration(
             first_name=body.first_name, last_name=body.last_name, email=body.email,
-            phone=body.phone, amka=body.amka, password=body.password, pharmacy=body.pharmacy)
+            phone=body.phone, amka=body.amka, password=body.password, pharmacy=body.pharmacy,
+            consents=consents)
     except PatientError as exc:
         err = str(exc)
         # approval_required → the pharmacy must create the account (no on-file contact to verify against)
@@ -1626,6 +1634,45 @@ class CyQrIn(BaseModel):
     doc_type: str = Field("NID", pattern="^(NID|ARC)$")
     doc_number: str = Field(..., min_length=4, max_length=20)
     for_ref: str | None = None          # γονιός/εξουσιοδοτημένος: QR για άλλον (έλεγχος στο `_view_target`)
+
+
+class CyJoinIn(BaseModel):
+    pharmacy: str = Field(..., min_length=3, max_length=80)
+    first_name: str = Field(..., min_length=1, max_length=60)
+    last_name: str = Field(..., min_length=1, max_length=60)
+    email: EmailStr
+    hio_code: str | None = Field(None, max_length=20)
+    doc_type: str | None = Field(None, pattern="^(NID|ARC|PASSPORT)$")
+    doc_number: str | None = Field(None, max_length=20)
+    mobile: str | None = Field(None, max_length=30)
+    website: str | None = Field(None, max_length=200)    # honeypot: οι άνθρωποι δεν το βλέπουν
+    accept_terms: bool = False                           # όροι + ενημέρωση απορρήτου (υποχρεωτικό)
+    health_data: bool = False                            # άρθρο 9 GDPR (υποχρεωτικό για την πύλη)
+    marketing: bool = False                              # προωθητικά (προαιρετικό)
+    channels: dict[str, bool] = Field(default_factory=dict)   # email/sms/viber/push
+
+
+@router.get("/cy/join/{pharmacy}",
+            dependencies=[Depends(rate_limit("patient_cy_join_info", limit=60, window_seconds=600))])
+async def cy_join_info(pharmacy: str):
+    """QR του πάγκου (Κύπρος): ποιο φαρμακείο — μόνο η επωνυμία, χωρίς σύνδεση."""
+    from app.services.cy import portal as cy_portal
+    return await cy_portal.join_info(pharmacy)
+
+
+@router.post("/cy/join",
+             dependencies=[Depends(rate_limit("patient_cy_join", limit=5, window_seconds=600))])
+async def cy_join(body: CyJoinIn):
+    """Αίτηση εγγραφής από το QR του πάγκου. ΚΑΝΕΝΑΣ λογαριασμός εδώ: ο φαρμακοποιός την εγκρίνει στα
+    «Πελάτες πύλης» αφού δει την ταυτότητα· τότε φεύγει email ορισμού κωδικού (ίδιο με την πρόσκληση)."""
+    from app.services.cy import portal as cy_portal
+    if body.website:                                     # bot: απαντάμε «ΟΚ» χωρίς να γράψουμε τίποτα
+        return {"ok": True}
+    return await cy_portal.join_request(
+        body.pharmacy, first_name=body.first_name, last_name=body.last_name, email=body.email,
+        hio_code=body.hio_code, doc_type=body.doc_type, doc_number=body.doc_number, mobile=body.mobile,
+        accept_terms=body.accept_terms, health_data=body.health_data, marketing=body.marketing,
+        channels=body.channels)
 
 
 @router.post("/cy/qr-check")

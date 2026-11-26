@@ -21,7 +21,7 @@ import { DonutChart } from "@/components/charts/DonutChart";
 import { BarChart } from "@/components/charts/BarChart";
 import { HeatmapChart, type HeatCell } from "@/components/charts/HeatmapChart";
 import { CalendarHeatmap } from "@/components/charts/CalendarHeatmap";
-import { fmtDate, fmtDateTime, fmtEur, fmtNum } from "@/lib/formatters";
+import { fmtDate, fmtDateTime, fmtEur, fmtNum, demoMask } from "@/lib/formatters";
 import { useT } from "@/store/prefStore";
 
 type Summary = { executions: number; value: number; hio: number; beneficiary: number; pc2: number; prescriptions: number; patient_count: number };
@@ -35,7 +35,7 @@ type Overview = {
   lost_customers: { lost: number; leak: number; monthly_value_cents: number };
 };
 
-const eur0 = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
+const eur0 = (c: number) => demoMask(new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100));
 
 export default function CyDashboardPage() {
   const t = useT();

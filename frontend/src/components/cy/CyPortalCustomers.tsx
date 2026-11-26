@@ -3,19 +3,27 @@
 /* RxVision Κύπρος — «Πελάτες πύλης». Ίδια οθόνη με την Ελλάδα (δείκτες, πρόσκληση με email, ξεκλείδωμα,
    εγγεγραμμένοι με διαγραφή), με κυπριακή ταυτότητα: κωδικός δικαιούχου ΟΑΥ ή ταυτότητα/ARC αντί ΑΜΚΑ.
    Νέος άνθρωπος ΧΩΡΙΣ συνταγές γράφεται με όνομα + κωδικό ΟΑΥ και «κουμπώνει» στις μελλοντικές εκτελέσεις.
-   Καμία αυτο-εγγραφή με QR (απόφαση ιδιοκτήτη 17/11/2026). Backend: services/cy/portal.py. */
+   QR του πάγκου (26/11/2026, αναθεώρηση της απόφασης 17/11): ο πελάτης στέλνει ΑΙΤΗΣΗ με τις συγκαταθέσεις του,
+   ο φαρμακοποιός ελέγχει την ταυτότητα στον πάγκο και πατά «Έγκριση» (καμία αυτόματη εγγραφή — το XML ΓεΣΥ
+   δεν έχει κινητό/email για OTP). Backend: services/cy/portal.py (join_*). */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { QRCodeCanvas } from "qrcode.react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Heart, KeyRound, Loader2, Mail, Search, Send, Trash2 } from "lucide-react";
+import { Check, Copy, Heart, KeyRound, Loader2, Mail, Printer, QrCode, Search, Send, Trash2, X } from "lucide-react";
+import { ConsentFormButton } from "@/components/portal/ConsentFormButton";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { appConfirm } from "@/store/dialogStore";
 import { toastError, toastSuccess } from "@/store/toastStore";
 import { fmtDateTime } from "@/lib/formatters";
 
+type JoinReq = { id: string; name: string; email: string; mobile?: string | null; hio_code?: string | null;
+  doc_type?: string | null; doc_hint?: string | null; created_at?: string; id_mismatch: boolean;
+  known_customer: boolean; known_name?: string | null; known_dob?: string | null };
 type Resp = { registered: number; total: number; to_invite: number; adoption_pct: number; contactable: number;
+  register_url?: string | null; pharmacy_name?: string | null; pending_requests?: number;
   registered_list: { name: string; account_id: string; patient_id: string; since?: string | null; no_dispensings?: boolean }[] };
 type Found = { patient_ref: string; full_name: string | null; no_dispensings?: boolean };
 
@@ -37,6 +45,48 @@ export function CyPortalCustomers() {
   const t = useT();
   const qc = useQueryClient();
   const { data: d } = useQuery({ queryKey: ["portal-customers"], queryFn: () => api<Resp>("/portal/portal-customers") });
+  const reqQ = useQuery({ queryKey: ["portal-join-requests"], queryFn: () => api<{ items: JoinReq[] }>("/portal/join-requests"), refetchInterval: 30000 });
+  const qrRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+  const decide = useMutation({
+    mutationFn: (v: { id: string; decision: "approve" | "reject" }) =>
+      api<{ ok: boolean; error?: string; email?: string }>(`/portal/join-requests/${v.id}/${v.decision}`, { method: "POST" }),
+    onSuccess: (r, v) => {
+      if (!r.ok) {
+        toastError(r.error === "id_mismatch"
+          ? t("Ο κωδικός ΟΑΥ ανήκει σε άλλη ταυτότητα. Έλεγξε τα στοιχεία ή απόρριψε την αίτηση.", "The HIO code belongs to another ID. Check the details or reject the request.")
+          : r.error === "email_exists" || r.error === "already_invited"
+            ? t("Υπάρχει ήδη λογαριασμός με αυτό το email.", "An account with this email already exists.")
+            : t("Δεν ολοκληρώθηκε. Δοκίμασε ξανά.", "Not completed. Please try again."));
+        return;
+      }
+      toastSuccess(v.decision === "approve"
+        ? t("✓ Εγκρίθηκε. Ο πελάτης παίρνει email για να ορίσει κωδικό.", "✓ Approved. The customer gets an email to set a password.")
+        : t("Η αίτηση απορρίφθηκε.", "Request rejected."));
+      qc.invalidateQueries({ queryKey: ["portal-join-requests"] });
+      qc.invalidateQueries({ queryKey: ["portal-customers"] });
+    },
+    onError: () => toastError(t("Κάτι πήγε στραβά.", "Something went wrong.")),
+  });
+  const url = d?.register_url || "";
+  const phName = d?.pharmacy_name || t("το φαρμακείο μας", "our pharmacy");
+
+  function printQR() {
+    const dataUrl = qrRef.current?.querySelector("canvas")?.toDataURL("image/png");
+    if (!dataUrl) return;
+    const w = window.open("", "_blank", "width=460,height=680");
+    if (!w) return;
+    const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR ${esc(phName)}</title></head>
+      <body style="margin:0;font-family:system-ui,sans-serif;text-align:center;padding:36px 24px;color:#0f172a">
+        <div style="font-size:14px;letter-spacing:.08em;color:#6366f1;font-weight:700">RxVision · ΠΥΛΗ ΠΕΛΑΤΩΝ</div>
+        <h1 style="font-size:24px;margin:8px 0 2px">${esc(phName)}</h1>
+        <p style="font-size:16px;color:#334155;margin:0 0 18px">Σκάναρε, κατέβασε την εφαρμογή &amp; κάνε εγγραφή — δες τις συνταγές σου!</p>
+        <img src="${dataUrl}" style="width:320px;height:320px"/>
+        <p style="font-size:13px;color:#64748b;margin-top:18px">Με τον κωδικό δικαιούχου ΟΑΥ ή την ταυτότητά σου · Δείξε την ταυτότητά σου στον φαρμακοποιό για έγκριση</p>
+      </body></html>`);
+    w.document.close(); w.focus(); setTimeout(() => w.print(), 250);
+  }
 
   // ── πρόσκληση: υπάρχων πελάτης (αναζήτηση) ή κωδικός ΟΑΥ / ταυτότητα ή νέος ──
   const [inv, setInv] = useState(EMPTY);
@@ -105,6 +155,51 @@ export function CyPortalCustomers() {
         <Kpi label={t("Προς πρόσκληση", "To invite")} value={d ? String(d.to_invite) : "—"} tint="text-amber-600"
           sub={d ? t(`${d.contactable} με στοιχεία επικοινωνίας`, `${d.contactable} contactable`) : undefined} />
       </div>
+
+      {url && (
+        <div className="rx-card flex flex-col gap-4 p-4 sm:flex-row sm:items-center">
+          <div ref={qrRef} className="grid shrink-0 place-items-center rounded-xl bg-white p-3 ring-1 ring-slate-200">
+            <QRCodeCanvas value={url} size={148} level="M" includeMargin />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200"><QrCode className="h-4 w-4 text-brand-600" /> {t("QR εγγραφής για τον πάγκο σου", "Counter registration QR")}</div>
+            <p className="mt-0.5 text-xs text-slate-500">{t("Τύπωσέ το και βάλ' το στον πάγκο. Ο πελάτης το σκανάρει, βάζει την εφαρμογή στο κινητό και στέλνει αίτηση με τον κωδικό ΟΑΥ ή την ταυτότητά του και τις συγκαταθέσεις του. Λογαριασμός ανοίγει ΜΟΝΟ όταν πατήσεις «Έγκριση» αφού δεις την ταυτότητά του.",
+              "Print it for the counter. The customer scans it, installs the app and sends a request with their HIO code or ID and their consents. An account opens ONLY when you press “Approve” after checking their ID.")}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={printQR} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"><Printer className="h-4 w-4" /> {t("Εκτύπωση QR", "Print QR")}</button>
+              <button type="button" onClick={() => { navigator.clipboard?.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700"><Copy className="h-4 w-4" /> {copied ? t("Αντιγράφηκε!", "Copied!") : t("Αντιγραφή συνδέσμου", "Copy link")}</button>
+              <ConsentFormButton />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(reqQ.data?.items.length ?? 0) > 0 && (
+        <div className="rx-card space-y-2 border-amber-300 p-4 dark:border-amber-700/60">
+          <div className="text-sm font-semibold text-amber-800 dark:text-amber-300">{t("Αιτήσεις από το QR — περιμένουν έγκριση", "QR requests — awaiting approval")} ({reqQ.data!.items.length})</div>
+          <p className="text-xs text-slate-500">{t("Έλεγξε την ταυτότητα του πελάτη στον πάγκο (όνομα και, αν υπάρχει, τα τελευταία ψηφία) πριν πατήσεις «Έγκριση».", "Check the customer's ID at the counter (name and, if shown, the last digits) before pressing “Approve”.")}</p>
+          {reqQ.data!.items.map((r) => (
+            <div key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-slate-800 dark:text-slate-100">{r.name}</div>
+                <div className="text-xs text-slate-500">{r.email}{r.mobile ? ` · ${r.mobile}` : ""}{r.hio_code ? ` · ΟΑΥ ${r.hio_code}` : ""}{r.doc_hint ? ` · ${r.doc_type === "ARC" ? "ARC" : t("Ταυτότητα", "ID")} ${r.doc_hint}` : ""}{r.created_at ? ` · ${fmtDateTime(r.created_at)}` : ""}</div>
+                <div className="mt-0.5 text-xs">{r.id_mismatch
+                  ? <span className="font-semibold text-rose-600">{t("⚠ Ο κωδικός ΟΑΥ ανήκει σε άλλη ταυτότητα από αυτή που δήλωσε", "⚠ The HIO code belongs to a different ID than the one given")}</span>
+                  : r.known_customer
+                    ? <span className="text-emerald-700">{t("Υπάρχει στις συνταγές σου ως", "In your prescriptions as")} <b>{r.known_name}</b>{r.known_dob ? ` · ${t("γέννηση", "born")} ${r.known_dob.split("-").reverse().join("/")}` : ""}</span>
+                    : <span className="text-slate-500">{t("Νέος πελάτης (χωρίς συνταγές ακόμη)", "New customer (no prescriptions yet)")}</span>}</div>
+              </div>
+              <button type="button" disabled={decide.isPending || r.id_mismatch} onClick={() => decide.mutate({ id: r.id, decision: "approve" })}
+                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"><Check className="h-3.5 w-3.5" /> {t("Έγκριση", "Approve")}</button>
+              <button type="button" disabled={decide.isPending} onClick={async () => {
+                if (await appConfirm(t(`Απόρριψη της αίτησης του ${r.name};`, `Reject ${r.name}'s request?`), { title: t("Απόρριψη", "Reject"), danger: true, confirmText: t("Απόρριψη", "Reject") }))
+                  decide.mutate({ id: r.id, decision: "reject" });
+              }} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700"><X className="h-3.5 w-3.5" /> {t("Απόρριψη", "Reject")}</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="rx-card space-y-3 p-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">

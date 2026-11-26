@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { QueryState } from "@/components/ui/QueryState";
 import { downloadCsv } from "@/lib/csv";
-import { fmtDate, fmtMoney} from "@/lib/formatters";
+import { fmtDate, fmtMoney, demoMask } from "@/lib/formatters";
 import { DateRangeFilter } from "@/components/filters/DateRangeFilter";
 import { useUiStore, filtersToQuery } from "@/store/uiStore";
 import { prevYearRange, pctDelta } from "@/lib/compare";
@@ -28,8 +28,8 @@ type HeatPoint = { dow: number; hour: number; value: number };
 type Top = { _id?: string; name?: string; rx?: number; value?: number };
 type Rx = { external_id: string; amount_total: number; executed_at: string; source: string };
 
-const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
-const eur2 = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
+const eur = (c: number) => demoMask(new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100));
+const eur2 = (c: number) => demoMask(new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100));
 const num = (n: number) => new Intl.NumberFormat("el-GR").format(n || 0);
 
 type RxRow = { external_id: string; executed_at: string; patient_name?: string | null; amka?: string | null; fund_name?: string | null; fund_general?: string | null; amount_total: number; amount_claimed: number };

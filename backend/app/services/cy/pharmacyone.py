@@ -246,6 +246,37 @@ SUPPLIERS = {"mefal": "Mefal", "blue": "Blue", "kedifap": "Kedifap", "koudounas"
              "biosearch": "Biosearch"}
 
 
+# ── «Οι φαρμακαποθήκες μου» (26/11/2026) ──────────────────────────────────────────────────────────
+# Η σύγκριση τιμών δείχνει ΜΟΝΟ τις φαρμακαποθήκες με τις οποίες συνεργάζεται το φαρμακείο (απόφαση
+# ιδιοκτήτη: «μην το δείξουμε στη ΜΕΦΑΛ και δείχνει ότι η ΚΕΔΙΦΑΠ είναι φθηνότερη»). Η λίστα ΔΕΝ βγαίνει
+# αυτόματα: το `supplier` του καταλόγου είναι η πηγή της PharmacyOne, όχι από πού αγοράζει το φαρμακείο.
+# Μη ρυθμισμένο → ΚΑΜΙΑ φαρμακαποθήκη (η οθόνη ζητά να επιλεγούν), ποτέ «όλες».
+async def my_suppliers(tenant_id: str) -> list[str] | None:
+    """Τα ΟΝΟΜΑΤΑ των φαρμακαποθηκών του φαρμακείου, ή None αν δεν έχουν οριστεί."""
+    from app.core.db import shared_db
+    t = await shared_db()["tenants"].find_one({"_id": tenant_id}, {"settings.cy_suppliers": 1})  # tenant-ok: own tenant
+    keys = ((t or {}).get("settings") or {}).get("cy_suppliers")
+    if keys is None:
+        return None
+    return [SUPPLIERS[k] for k in keys if k in SUPPLIERS]
+
+
+async def set_my_suppliers(tenant_id: str, keys: list[str]) -> list[str]:
+    from app.core.db import shared_db
+    clean = [k for k in dict.fromkeys(keys or []) if k in SUPPLIERS]
+    await shared_db()["tenants"].update_one(  # tenant-ok: own tenant
+        {"_id": tenant_id}, {"$set": {"settings.cy_suppliers": clean}})
+    return clean
+
+
+def only_mine(suppliers: list[dict] | None, mine: list[str] | None) -> list[dict]:
+    """Ο ΕΝΑΣ κανόνας: από τους προμηθευτές ενός είδους κρατά μόνο τους δικούς μου (κανέναν αν δεν έχουν οριστεί)."""
+    if not mine:
+        return []
+    allowed = set(mine)
+    return [x for x in suppliers or [] if x.get("name") in allowed]
+
+
 def suppliers_of(it: dict) -> list[dict]:
     """Όλοι οι χονδρέμποροι που διαθέτουν το είδος: κωδικός, χονδρική, λιανική, απόθεμα, προσφορά."""
     out = []

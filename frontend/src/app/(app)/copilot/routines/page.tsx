@@ -10,6 +10,7 @@ import { QueryState } from "@/components/ui/QueryState";
 import { appConfirm } from "@/store/dialogStore";
 import Link from "next/link";
 
+import { demoMask } from "@/lib/formatters";
 type Routine = {
   _id: string; name: string; schedule: { kind: string; time: string; weekday?: number; dom?: number };
   schedule_label: string; action?: string; report_tool?: string; report_label: string; delivery?: string; email?: string | null;
@@ -20,7 +21,7 @@ type Run = {
   _id: string; routine_name: string; at: string; ok: boolean; report: string; read: boolean;
   kind?: string; status?: string; channel?: string; audience_count?: number; est_cost_cents?: number;
 };
-const eur = (c?: number) => `${((c || 0) / 100).toFixed(2).replace(".", ",")} €`;
+const eur = (c?: number) => demoMask(`${((c || 0) / 100).toFixed(2).replace(".", ",")} €`);
 
 // ίδια λίστα με REPORT_TOOLS του backend (copilot_service.py)
 const REPORT_TOOLS: [string, string, string][] = [

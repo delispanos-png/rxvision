@@ -9,6 +9,7 @@ import { useT } from "@/store/prefStore";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { Modal } from "@/components/ui/Modal";
 
+import { demoMask } from "@/lib/formatters";
 // fallback defaults — τα πραγματικά timings έρχονται global από το adminpanel (/platform/status)
 const DEF_REPEAT_S = 30, DEF_ESCALATE_M = 3;
 
@@ -31,7 +32,7 @@ function beep() {
 type PortalItem = { id: string; kind: string; title: string; who?: string; when?: string };
 type Order = { _id: string; patient_name?: string; total_cents?: number; mode?: string; status: string; has_medicine?: boolean; created_at?: string };
 
-const eur = (c?: number) => `${((c || 0) / 100).toFixed(2).replace(".", ",")} €`;
+const eur = (c?: number) => demoMask(`${((c || 0) / 100).toFixed(2).replace(".", ",")} €`);
 const ORDER_ACTIONABLE = ["new", "preparing"];
 
 function BellBtn({ icon: Icon, count, label, tint, active, onClick }: {

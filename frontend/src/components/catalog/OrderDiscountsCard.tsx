@@ -10,13 +10,14 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { DateInput } from "@/components/ui/DateInput";
 
+import { demoMask } from "@/lib/formatters";
 type OD = {
   _id?: string; name: string; discount_type: "order" | "free_shipping"; value_type: "pct" | "fixed";
   value: number; min_cents: number; min_qty: number; usage_limit: number; used_count?: number;
   active: boolean; starts_at?: string | null; ends_at?: string | null; status?: string;
 };
 const EMPTY: OD = { name: "", discount_type: "order", value_type: "pct", value: 10, min_cents: 0, min_qty: 0, usage_limit: 0, active: true };
-const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
+const eur = (c: number) => demoMask((c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €");
 const statusMap = (t: (a: string, b: string) => string): Record<string, [string, string]> => ({
   active: [t("Ενεργή", "Active"), "bg-emerald-100 text-emerald-700"],
   scheduled: [t("Προγραμματισμένη", "Scheduled"), "bg-sky-100 text-sky-700"],

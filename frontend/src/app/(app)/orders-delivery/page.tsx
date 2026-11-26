@@ -8,6 +8,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
 import { useT } from "@/store/prefStore";
 
+import { demoMask } from "@/lib/formatters";
 type T = (el: string, en: string) => string;
 
 type Item = { barcode: string; name: string; qty: number; line_cents: number; discount_pct: number; type: string; backorder?: boolean };
@@ -21,7 +22,7 @@ type Order = {
   available_from?: string | null; available_to?: string | null; payment_method?: string | null;
   note?: string | null; internal_note?: string | null; customer_message?: string | null; messages?: Msg[];
 };
-const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
+const eur = (c: number) => demoMask((c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €");
 const oidOf = (o: Order) => (o._id || "").slice(-6).toUpperCase();
 const dmy = (s?: string | null) => { if (!s) return ""; const p = s.split("T")[0].split("-"); return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : s; };
 const availWindow = (o: Order) => o.available_date ? `${dmy(o.available_date)}${o.available_from && o.available_to ? `, ${o.available_from}–${o.available_to}` : ""}` : "";

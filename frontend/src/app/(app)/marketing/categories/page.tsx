@@ -8,10 +8,11 @@ import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
+import { demoMask } from "@/lib/formatters";
 type Cat = { key: string; label: string; icon: string; offer: string; patients: number; reachable: number; value: number };
 type Res = { items: Cat[]; country?: string; catalog: { key: string; label: string; icon: string; offer: string }[] };
 
-const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`;
+const eur = (c: number) => demoMask(`${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`);
 
 export default function TherapyCategoriesPage() {
   const t = useT();

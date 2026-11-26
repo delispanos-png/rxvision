@@ -3,6 +3,7 @@
 // Προσφορές ΥΠΗΡΕΣΙΩΝ φαρμακείου (π.χ. «−30% σπιρομέτρηση», «δωρεάν μέτρηση πίεσης»).
 // Δεν είναι προϊόντα καταλόγου — δεν μπαίνουν στο καλάθι. Ο πελάτης τις «κλείνει» ως ραντεβού
 // από το κύκλωμα «Προσφορές» στο my.rxvision.gr.
+import { demoMask } from "@/lib/formatters";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Sparkles, Plus, Trash2, Pencil, X, ImagePlus, Loader2 } from "lucide-react";
@@ -15,7 +16,7 @@ export type ServiceOffer = {
   cta: "reserve" | "info"; active: boolean; starts_at?: string | null; ends_at?: string | null;
 };
 const EMPTY: ServiceOffer = { title: "", description: "", is_free: false, price_cents: 0, compare_cents: 0, cta: "reserve", active: true };
-const eur = (c?: number) => ((c || 0) / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
+const eur = (c?: number) => demoMask(((c || 0) / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €");
 const imgSrc = (o: ServiceOffer) => o.image_id ? `${API_BASE}/catalog/image/${o.image_id}` : (o.photo_url || "");
 
 export function ServiceOffersCard() {

@@ -51,7 +51,8 @@ type Item = {
 };
 type Variant = { color?: string | null; size?: string | null; barcode?: string | null; stock_qty?: number };
 type Summary = { skus: number; active: number; for_sale: number; units: number; value_cents: number; low: number; expiring: number };
-type WH = { items: Item[]; total: number; summary: Summary; suppliers?: string[] };
+// my_suppliers: μόνο Κύπρος — οι φαρμακαποθήκες του φαρμακείου (null = δεν έχουν οριστεί → δεν δείχνουμε τιμές άλλων)
+type WH = { items: Item[]; total: number; summary: Summary; suppliers?: string[]; my_suppliers?: string[] | null };
 type Move = { kind: string; qty: number; reason?: string | null; batch?: string | null; expiry?: string | null; new_stock?: number; at: string; by?: string | null };
 
 const typeElMap = (t: (a: string, b: string) => string): Record<string, string> => ({ rx_medicine: t("Συνταγογρ.", "Rx"), otc_medicine: t("ΜΗ.ΣΥ.ΦΑ.", "OTC"), parapharmacy: t("Παραφάρμακο", "Parapharmacy") });
@@ -344,6 +345,11 @@ export default function WarehousePage() {
             <option value="">{t("Προμηθευτής: όλοι", "Supplier: all")}</option>
             {list.data!.suppliers!.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
+        )}
+        {list.data && list.data.my_suppliers === null && (
+          <a href="/cy/reorder" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-200">
+            🚚 {t("Διάλεξε τις φαρμακαποθήκες σου για να βλέπεις τις τιμές τους", "Choose your wholesalers to see their prices")}
+          </a>
         )}
         <button onClick={() => setNoImg((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${noImg ? "bg-indigo-100 text-indigo-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>📷 {t("Χωρίς φωτο", "No photo")}</button>
         <button onClick={() => setNoCat((v) => !v)} className={`rounded-lg px-3 py-1.5 text-sm font-medium ${noCat ? "bg-indigo-100 text-indigo-700" : "border border-slate-300 text-slate-600 dark:border-slate-600"}`}>🗂️ {t("Χωρίς κατηγορία", "No category")}</button>

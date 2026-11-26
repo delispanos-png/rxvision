@@ -360,13 +360,15 @@ async def reorder(tenant_id: str, *, horizon: int = 14, today: date | None = Non
     # Αποθήκη: ΕΝΑΣ ορισμός ταιριάσματος (barcode με/χωρίς 0, κωδικός ΓεΣΥ) — services/cy/warehouse.py
     from app.services.cy import warehouse
     wh = await warehouse.lookup(tenant_id, list(need.values()), fields=("stock_qty", "suppliers", "name"))
+    from app.services.cy.pharmacyone import my_suppliers, only_mine
+    mine = await my_suppliers(tenant_id)          # μόνο οι συνεργαζόμενες φαρμακαποθήκες συγκρίνονται
     items = []
     basket: dict = {}
     for v in need.values():
         prod = wh.get(v.get("barcode"), v.get("code"))
         st = (prod or {}).get("stock_qty")
         suggested = max(0, v["expected"] - (st or 0)) if st is not None else v["expected"]
-        sup = compare_suppliers((prod or {}).get("suppliers") or [])
+        sup = compare_suppliers(only_mine((prod or {}).get("suppliers"), mine))
         best = sup[0] if sup else None
         worst = max((x["wholesale_cents"] for x in sup), default=None)
         items.append({**v, "patients": len([x for x in v["patients"] if x]), "stock": st, "suggested": suggested,
@@ -381,7 +383,7 @@ async def reorder(tenant_id: str, *, horizon: int = 14, today: date | None = Non
                 b["cost_cents"] += x["wholesale_cents"] * suggested
                 b["cheapest"] += 1 if best and x["name"] == best["name"] else 0
     items.sort(key=lambda x: (-x["suggested"], -x["missed_30d"], x["description"] or ""))
-    return {"horizon_days": horizon, "items": items,
+    return {"horizon_days": horizon, "items": items, "my_suppliers": mine,
             "baskets": sorted(basket.values(), key=lambda b: (-b["items"], b["cost_cents"])),
             "summary": {"products": len(items), "units": sum(i["suggested"] for i in items),
                         "with_stock_info": sum(1 for i in items if i["stock"] is not None),

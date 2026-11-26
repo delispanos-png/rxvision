@@ -9,7 +9,7 @@ import { PanelCard } from "@/components/ui/Card";
 import { CoachStrip } from "@/components/coach/CoachStrip";
 import { ContactCard } from "@/components/patients/ContactCard";
 import { Tooltip } from "@/components/ui/Tooltip";
-import { fmtDate } from "@/lib/formatters";
+import { fmtDate, demoMask } from "@/lib/formatters";
 
 type Med = { name: string | null; barcode: string | null; substance: string | null; atc: string | null; category: string | null; times: number; value: number };
 type Icd = { code: string; count: number; title?: string | null };
@@ -22,7 +22,7 @@ type Detail = {
   icd10: Icd[]; medicines: Med[];
 };
 
-const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
+const eur = (c: number) => demoMask(new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100));
 const dte = (s: string | null) => (s ? fmtDate(s) : "—");
 
 export default function PatientDetailPage() {

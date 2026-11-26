@@ -10,17 +10,19 @@ import { PanelCard } from "@/components/ui/Card";
 type Note = { id: string; text: string; by: string | null; at: string | null };
 
 /** «Σχόλια» — log χρονολογημένων σχολίων φαρμακοποιού για τον πελάτη. Κάθε σχόλιο κρατιέται
- *  στο ιστορικό (δεν αντικαθίσταται), με ημερομηνία· διαγραφή ανά σχόλιο. Keyed by ΑΜΚΑ. */
-export function PatientCommentsCard({ amka }: { amka: string }) {
+ *  στο ιστορικό (δεν αντικαθίσταται), με ημερομηνία· διαγραφή ανά σχόλιο.
+ *  Ελλάδα: με ΑΜΚΑ. Κύπρος: με το ψευδώνυμο ΓεΣΥ (`patientId`) — ίδιο κύκλωμα (26/11/2026). */
+export function PatientCommentsCard({ amka, patientId }: { amka: string; patientId?: string }) {
   const t = useT();
+  const key = patientId ? `patient_id=${encodeURIComponent(patientId)}` : `amka=${encodeURIComponent(amka)}`;
   const q = useQuery({
-    queryKey: ["patient-notes", amka],
-    queryFn: () => api<{ items: Note[] }>(`/patient-intelligence/profile/notes?amka=${encodeURIComponent(amka)}`),
-    enabled: !!amka,
+    queryKey: ["patient-notes", amka, patientId],
+    queryFn: () => api<{ items: Note[] }>(`/patient-intelligence/profile/notes?${key}`),
+    enabled: !!(amka || patientId),
   });
   const [text, setText] = useState("");
   const add = useMutation({
-    mutationFn: () => api("/patient-intelligence/profile/notes", { method: "POST", body: JSON.stringify({ amka, text: text.trim() }) }),
+    mutationFn: () => api("/patient-intelligence/profile/notes", { method: "POST", body: JSON.stringify({ amka, patient_id: patientId, text: text.trim() }) }),
     onSuccess: () => { setText(""); q.refetch(); },
   });
   const del = useMutation({

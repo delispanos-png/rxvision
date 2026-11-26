@@ -908,7 +908,7 @@ class PatientIntelligenceRepository(BaseRepository):
         return await self._db["patients_anonymized"].find_one(
             {"tenant_id": self.tenant_id, "amka": (amka or "").strip()})
 
-    async def list_notes(self, amka: str) -> list[dict]:
+    async def list_notes(self, amka: str, patient_id: str | None = None) -> list[dict]:
         pa = await self._patient_by_amka(amka)
         if not pa:
             return []
@@ -917,7 +917,7 @@ class PatientIntelligenceRepository(BaseRepository):
         return jsonsafe([{"id": str(n["_id"]), "text": n.get("text"), "by": n.get("by"),
                           "at": n.get("at")} for n in rows])
 
-    async def add_note(self, amka: str, text: str, by: str | None = None) -> dict:
+    async def add_note(self, amka: str, text: str, by: str | None = None, patient_id: str | None = None) -> dict:
         pa = await self._patient_by_amka(amka)
         if not pa:
             return {"ok": False, "error": "patient_not_found"}
@@ -938,7 +938,7 @@ class PatientIntelligenceRepository(BaseRepository):
         await self._db["patient_notes"].delete_one({"_id": oid, "tenant_id": self.tenant_id})
         return {"ok": True}
 
-    async def set_g6pd(self, amka: str, value: bool) -> dict:
+    async def set_g6pd(self, amka: str, value: bool, patient_id: str | None = None) -> dict:
         """Pharmacist-set clinical flag: G6PD enzyme deficiency. Stored in the protected
         patient_contacts doc (survives ΗΔΥΚΑ re-ingest); fed to the AI advice."""
         pa = await self._patient_by_amka(amka)

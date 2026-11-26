@@ -163,7 +163,7 @@ export default function PatientProfilePage() {
   const t = useT();
   const router = useRouter();
   // ΚΥΠΡΟΣ: ΙΔΙΑ οθόνη με δεδομένα ΓεΣΥ (backend repositories/cy_intelligence.py). Ό,τι στηρίζεται σε
-  // ΑΜΚΑ/ΗΔΥΚΑ (εμβόλιο γρίπης, οικογένεια, μετρήσεις, G6PD, σχόλια, AI, πύλη με ΑΜΚΑ) δεν εμφανίζεται·
+  // ΑΜΚΑ/ΗΔΥΚΑ (εμβόλιο γρίπης, οικογένεια, πύλη με ΑΜΚΑ) δεν εμφανίζεται· G6PD & σχόλια ΝΑΙ (26/11/2026)·
   // επαφές/πύλη/πιστότητα ζουν στην Καρτέλα πελάτη ΓεΣΥ.
   const isCy = useCountry() === "CY";
   const idLabel = useIdLabel();
@@ -202,7 +202,9 @@ export default function PatientProfilePage() {
     onSuccess: (d) => setAdvice(d),
   });
   const g6pdMut = useMutation({
-    mutationFn: (v: boolean) => api("/patient-intelligence/profile/g6pd", { method: "POST", body: JSON.stringify({ amka: search.data?.patient?.amka, g6pd_deficiency: v }) }),
+    mutationFn: (v: boolean) => api("/patient-intelligence/profile/g6pd", { method: "POST", body: JSON.stringify(isCy
+      ? { patient_id: search.data?.patient?.id, g6pd_deficiency: v }
+      : { amka: search.data?.patient?.amka, g6pd_deficiency: v }) }),
   });
   // ΠΡΩΤΑ: έχει ήδη λογαριασμό; → καθαρό μήνυμα + «στείλε ξανά σύνδεσμο» (όχι «αποτυχία — ίσως…»)
   const portalAmka = search.data?.patient?.amka;
@@ -414,7 +416,7 @@ export default function PatientProfilePage() {
 
           {/* Εκκρεμεί δανεικό; Μπαίνει ΠΑΝΩ από όλα: είναι το μόνο που μπορεί να ζητηθεί πίσω
               όσο ο πελάτης είναι ακόμη μπροστά σου. */}
-          {!isCy && <AdvanceLoanNotice patientId={p.patient.id} />}
+          <AdvanceLoanNotice patientId={p.patient.id} />
 
           {/* Μόνιμη ειδοποίηση: τα στοιχεία επικοινωνίας θέλουν ενημέρωση/επιβεβαίωση */}
           {contactSt.data?.needs_confirmation && (
@@ -698,7 +700,10 @@ export default function PatientProfilePage() {
           {/* πρόγραμμα λήψης φαρμάκων — ο φαρμακοποιός το ρυθμίζει για τον ασθενή (φαίνεται στην πύλη) */}
           <MedScheduleCard patientId={p.patient.id} />
 
-          {/* Κλινικό flag G6PD */}
+
+          </>)}
+
+          {/* Κλινικό flag G6PD — Ελλάδα (ΑΜΚΑ) & Κύπρος (ψευδώνυμο ΓεΣΥ), 26/11/2026 */}
           <div className={`flex flex-wrap items-center gap-3 rounded-2xl border p-4 ${g6pd ? "border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-950/20" : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"}`}>
             <label className="inline-flex items-center gap-2 text-sm">
               <input type="checkbox" checked={g6pd} onChange={(e) => { setG6pd(e.target.checked); g6pdMut.mutate(e.target.checked); }}
@@ -709,9 +714,7 @@ export default function PatientProfilePage() {
           </div>
 
           {/* Σχόλια — log χρονολογημένων σχολίων φαρμακοποιού */}
-          <PatientCommentsCard amka={p.patient.amka} />
-
-          </>)}
+          <PatientCommentsCard amka={isCy ? "" : p.patient.amka} patientId={isCy ? p.patient.id : undefined} />
 
           {/* AI advice — gated by the ai_assistant (Pro) entitlement */}
           {aiEntitled && (

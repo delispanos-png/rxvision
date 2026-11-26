@@ -116,6 +116,39 @@ class LoyaltyIn(BaseModel):
     enroll: bool = True
 
 
+class MySuppliersIn(BaseModel):
+    keys: list[str] = Field(default_factory=list, max_length=30)
+
+
+@router.get("/suppliers")
+async def suppliers_get(ctx: TenantContext = Depends(require_cy)):
+    """«Οι φαρμακαποθήκες μου»: όλες οι φαρμακαποθήκες της Κύπρου + ποιες έχει επιλέξει το φαρμακείο."""
+    from app.services.cy.pharmacyone import SUPPLIERS
+    from app.core.db import shared_db
+    t = await shared_db()["tenants"].find_one({"_id": ctx.tenant_id}, {"settings.cy_suppliers": 1})  # tenant-ok: own tenant
+    return {"all": [{"key": k, "name": v} for k, v in SUPPLIERS.items()],
+            "mine": ((t or {}).get("settings") or {}).get("cy_suppliers")}
+
+
+@router.put("/suppliers")
+async def suppliers_set(body: MySuppliersIn, ctx: TenantContext = Depends(require_cy)):
+    from app.services.cy.pharmacyone import set_my_suppliers
+    _perm(ctx, "settings:write")
+    return {"mine": await set_my_suppliers(ctx.tenant_id, body.keys)}
+
+
+class GhsQrIn(BaseModel):
+    code: str = Field(..., min_length=6, max_length=80)
+
+
+@router.post("/loyalty/identify")
+async def loyalty_identify(body: GhsQrIn, ctx: TenantContext = Depends(require_cy)):
+    """Πιστότητα: σάρωση του QR ΓεΣΥ του πελάτη → το μέλος (ΕΝΑ QR για ΓεΣΥ και πόντους).
+    Πρόσθετο «loyalty»: το ελέγχει η `require_cy` (CY_ROUTE_MODULES)."""
+    from app.services.cy import portal as cy_portal
+    return await cy_portal.identify_by_ghs_qr(ctx.tenant_id, body.code)
+
+
 @router.post("/patients/{ref}/loyalty")
 async def patient_loyalty(ref: str, body: LoyaltyIn, ctx: TenantContext = Depends(require_cy)):
     """Εγγραφή/διαγραφή πελάτη ΓεΣΥ στην πιστότητα από την Καρτέλα πελάτη."""

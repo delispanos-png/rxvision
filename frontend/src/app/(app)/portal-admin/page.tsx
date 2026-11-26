@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from "react";
 import { DateInput } from "@/components/ui/DateInput";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { QRCodeCanvas } from "qrcode.react";
+import { ConsentFormButton } from "@/components/portal/ConsentFormButton";
 import { Users, MessageSquare, CalendarClock, Stethoscope, FileText, ZoomIn, Trash2, Heart, Copy, Printer, KeyRound, Loader2, Send, Mail } from "lucide-react";
 import { api, apiBlob } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
@@ -191,6 +192,7 @@ function PortalCustomersTab() {
             <button onClick={printQR} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"><Printer className="h-4 w-4" /> {t("Εκτύπωση QR", "Print QR")}</button>
             <button onClick={() => { navigator.clipboard?.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700"><Copy className="h-4 w-4" /> {copied ? t("Αντιγράφηκε!", "Copied!") : t("Αντιγραφή συνδέσμου", "Copy link")}</button>
+            <ConsentFormButton />
           </div>
         </div>
       </div>

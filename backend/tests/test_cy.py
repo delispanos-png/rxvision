@@ -1912,11 +1912,29 @@ async def test_cy_reorder_matches_warehouse_by_gesy_code_and_compares(mem, monke
         "tenant_id": CY, "name": "JIVOLAR", "drug_code": "41M0186", "stock_qty": 0,
         "suppliers": [{"name": "Mefal", "wholesale_cents": 2000, "stock": 3},
                       {"name": "Blue", "wholesale_cents": 1800, "stock": None}]})
+    from app.services.cy.pharmacyone import set_my_suppliers
+
+    def jiv_of(res):
+        return next((i for i in res["items"] if (i.get("code") or "").startswith("41M0186")), None)
+
+    # Μη ρυθμισμένες «φαρμακαποθήκες μου» → ΚΑΜΙΑ σύγκριση (ποτέ «όλες»)
     res = await insights.reorder(CY, horizon=60)
-    jiv = next((i for i in res["items"] if (i.get("code") or "").startswith("41M0186")), None)
+    jiv = jiv_of(res)
     assert jiv and jiv["suggested"] > 0, "το είδος βρέθηκε στην Αποθήκη με τον κωδικό ΓεΣΥ"
+    assert jiv["suppliers"] == [] and res["baskets"] == [] and res["my_suppliers"] is None
+
+    await set_my_suppliers(CY, ["mefal", "blue", "unknown"])
+    res = await insights.reorder(CY, horizon=60)
+    jiv = jiv_of(res)
     assert jiv["best_supplier"] == "Blue" and jiv["saving_cents"] == 200 * jiv["suggested"]
-    assert res["baskets"] and res["summary"]["with_suppliers"] >= 1
+    assert res["baskets"] and res["summary"]["with_suppliers"] >= 1 and res["my_suppliers"] == ["Mefal", "Blue"]
+
+    # Συνεργάζεται ΜΟΝΟ με τη Mefal → η φθηνότερη Blue δεν εμφανίζεται πουθενά
+    await set_my_suppliers(CY, ["mefal"])
+    res = await insights.reorder(CY, horizon=60)
+    jiv = jiv_of(res)
+    assert [x["name"] for x in jiv["suppliers"]] == ["Mefal"] and jiv["saving_cents"] == 0
+    assert {b["supplier"] for b in res["baskets"]} == {"Mefal"}
 
 
 async def test_cy_deceased_is_excluded_everywhere_but_the_card(mem, monkeypatch):
@@ -2536,3 +2554,145 @@ async def test_cy_portal_qr_checks_id_without_storing_it(mem, monkeypatch):
         raise AssertionError("ελληνικός λογαριασμός")
     except HTTPException as exc:
         assert exc.status_code == 404
+
+
+# ── QR πάγκου → αίτηση → έγκριση από το φαρμακείο (26/11/2026) ──────────────────
+
+async def test_cy_join_request_needs_pharmacist_approval(mem, monkeypatch):
+    from app.services.cy import portal as cy_portal
+    ref = await _portal_setup(mem, monkeypatch)
+    assert (await cy_portal.join_info(GR))["ok"] is False, "μόνο κυπριακά φαρμακεία"
+    assert (await cy_portal.join_info(CY))["ok"] is True
+    p = await mem["cy_patients"].find_one({"pseudo_id": ref})
+    hio = p.get("hio_code")
+
+    r = await cy_portal.join_request(CY, first_name="Αντρέας", last_name="Τεστ", email="New@x.cy",
+                                     hio_code=hio, doc_type="NID", doc_number="0000999001",
+                                     accept_terms=True, health_data=True, marketing=True,
+                                     channels={"email": True, "sms": False, "viber": True, "push": True})
+    assert r["ok"] is True
+    again = await cy_portal.join_request(CY, first_name="Αντρέας", last_name="Τεστ", email="new@x.cy",
+                                         hio_code=hio, doc_type="NID", doc_number="0000999001", accept_terms=True, health_data=True)
+    assert again["ok"] and await mem["cy_portal_requests"].count_documents({}) == 1, "ένα email = μία αίτηση"
+    assert await mem["patient_accounts"].count_documents({}) == 0, "καμία πρόσβαση πριν την έγκριση"
+    async for doc in mem["cy_portal_requests"].find({}):
+        assert "0000999001" not in repr(doc), "ο αριθμός εγγράφου δεν αποθηκεύεται ποτέ"
+        assert doc["doc_hint"] == "…001" and doc["tenant_id"] == CY
+
+    [row] = await cy_portal.join_requests(CY)
+    assert row["known_customer"] is True and row["id_mismatch"] is False
+
+    res = await cy_portal.join_decide(CY, row["id"], approve=True, by="u1")
+    assert res["ok"] is True, res
+    acc = await mem["patient_accounts"].find_one({"email": "new@x.cy"})
+    assert acc and acc["country"] == "CY"
+    # ό,τι δήλωσε στην ΠΡΩΤΗ αίτηση; Η δεύτερη (ίδιο email) την αντικατέστησε → μόνο υποχρεωτικά
+    assert acc["consents"]["health_data"]["granted"] is True
+    assert acc["consents"]["marketing"]["granted"] is False
+    from app.services.patient_auth_service import PORTAL_CONSENT_VERSION
+    assert acc["terms_accepted"]["version"] == PORTAL_CONSENT_VERSION
+    assert acc["notify_prefs"] == {"email": False, "sms": False, "viber": False, "push": False}
+    assert (await mem["patient_links"].find_one({"account_id": acc["_id"]}))["tenant_id"] == CY
+    done = await mem["cy_portal_requests"].find_one({})
+    assert done["status"] == "approved" and "hio_code" not in done and "doc_ref" not in done
+    assert await cy_portal.join_requests(CY) == []
+
+
+async def test_cy_join_requires_terms_and_health_consent(mem, monkeypatch):
+    from app.services.cy import portal as cy_portal
+    await _portal_setup(mem, monkeypatch)
+    base = dict(first_name="Α", last_name="Β", email="c@x.cy", doc_type="NID", doc_number="555")
+    assert (await cy_portal.join_request(CY, **base))["error"] == "terms_required"
+    assert (await cy_portal.join_request(CY, **base, accept_terms=True))["error"] == "health_consent_required"
+    assert await mem["cy_portal_requests"].count_documents({}) == 0
+
+
+async def test_cy_join_marketing_consent_per_channel_is_applied(mem, monkeypatch):
+    from app.services.cy import portal as cy_portal
+    await _portal_setup(mem, monkeypatch)
+    await cy_portal.join_request(CY, first_name="Μ", last_name="Κ", email="m@x.cy", doc_type="NID",
+                                 doc_number="888", accept_terms=True, health_data=True, marketing=True,
+                                 channels={"email": True, "sms": False, "viber": True, "push": True})
+    [row] = await cy_portal.join_requests(CY)
+    res = await cy_portal.join_decide(CY, row["id"], approve=True)
+    acc = await mem["patient_accounts"].find_one({"email": "m@x.cy"})
+    assert acc["consents"]["marketing"]["granted"] is True
+    assert acc["notify_prefs"] == {"email": True, "sms": False, "viber": True, "push": True}
+    p = await mem["cy_patients"].find_one({"pseudo_id": res["patient_id"]})
+    assert p["contact"]["marketing_consent"] is True and p["contact"]["consent_source"] == "portal_qr"
+
+
+async def test_cy_join_wrong_id_is_flagged_and_reject_creates_nothing(mem, monkeypatch):
+    from app.services.cy import portal as cy_portal
+    ref = await _portal_setup(mem, monkeypatch)
+    hio = (await mem["cy_patients"].find_one({"pseudo_id": ref})).get("hio_code")
+    await cy_portal.join_request(CY, first_name="Α", last_name="Β", email="imp@x.cy",
+                                 hio_code=hio, doc_type="NID", doc_number="12345", accept_terms=True, health_data=True)
+    [row] = await cy_portal.join_requests(CY)
+    assert row["id_mismatch"] is True, "κωδικός ΟΑΥ άλλου ανθρώπου → προειδοποίηση στον φαρμακοποιό"
+    assert (await cy_portal.join_decide(CY, row["id"], approve=True))["error"] == "id_mismatch"
+    assert (await cy_portal.join_decide(CY, row["id"], approve=False))["ok"] is True
+    assert await mem["patient_accounts"].count_documents({}) == 0
+    assert (await mem["cy_portal_requests"].find_one({}))["status"] == "rejected"
+
+
+async def test_cy_join_new_person_with_only_an_id_card(mem, monkeypatch):
+    from app.services.cy import portal as cy_portal
+    await _portal_setup(mem, monkeypatch)
+    await cy_portal.join_request(CY, first_name="Νέα", last_name="Πελάτισσα", email="nea@x.cy",
+                                 doc_type="ARC", doc_number="ARC-777", accept_terms=True, health_data=True)
+    [row] = await cy_portal.join_requests(CY)
+    assert row["known_customer"] is False
+    res = await cy_portal.join_decide(CY, row["id"], approve=True)
+    assert res["ok"] is True, res
+    p = await mem["cy_patients"].find_one({"pseudo_id": res["patient_id"]})
+    assert p["source"] == "portal_qr" and p["id_ref"] == res["patient_id"], "ίδιο ψευδώνυμο με το XML"
+    assert "ARC-777" not in repr(p) and "ARC777" not in repr(p), "ο αριθμός εγγράφου δεν αποθηκεύεται"
+
+
+
+# ── ΕΝΑ QR: το QR του ΓεΣΥ ταυτοποιεί και στην πιστότητα (26/11/2026) ─────────────────────────────────
+
+async def test_ghs_qr_identifies_loyalty_member(mem, monkeypatch):
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services.cy import portal as cy_portal
+    ref = await _portal_setup(mem, monkeypatch)
+    p = await mem["cy_patients"].find_one({"pseudo_id": ref})
+    y, mo, d = p["dob"].split("-")
+    shell = await PatientAccountRepository().cy_shell(CY, ref, p.get("full_name"))
+    for raw in (f"0000999001\t{d}/{mo}/{y}", f"0000 999001 {d}/{mo}/{y}", f"0000999001{d}/{mo}/{y}"):
+        r = await cy_portal.identify_by_ghs_qr(CY, raw)
+        assert r["ok"] and r["patient_id"] == ref and r["patient_ref"] == str(shell), (raw, r)
+    assert (await cy_portal.identify_by_ghs_qr(CY, "0000999001\t01/01/1900"))["error"] == "dob_mismatch"
+    assert (await cy_portal.identify_by_ghs_qr(CY, f"1234567\t{d}/{mo}/{y}"))["error"] == "not_found"
+    assert (await cy_portal.identify_by_ghs_qr(CY, "RXVL:abc"))["error"] == "not_ghs_qr"
+    assert (await cy_portal.identify_by_ghs_qr(GR, f"0000999001\t{d}/{mo}/{y}"))["error"] == "not_found", \
+        "άλλο φαρμακείο → τίποτα (ψευδώνυμο ανά φαρμακείο)"
+
+
+# ── Εικόνα πελάτη (Κύπρος): G6PD & σχόλια με το ψευδώνυμο ΓεΣΥ (26/11/2026) ─────────────────────────
+
+async def test_cy_g6pd_and_notes_survive_reimport_and_gdpr_erase(mem, monkeypatch):
+    from app.repositories.cy_intelligence import CyPatientIntelligenceRepository
+    from app.services.cy import gdpr as cy_gdpr
+    from app.services.cy.importer import import_files
+    ref = await _portal_setup(mem, monkeypatch)
+    repo = CyPatientIntelligenceRepository(tenant_id=CY)
+
+    assert (await repo.set_g6pd("", True, patient_id=ref))["ok"]
+    assert (await repo.add_note("", "  Αλλεργία στην πενικιλίνη  ", "u1", patient_id=ref))["ok"]
+    assert (await repo.add_note("", "   ", patient_id=ref))["error"] == "empty"
+    assert (await repo.set_g6pd("", True, patient_id="nope"))["error"] == "patient_not_found"
+
+    await import_files(CY, [("again.xml", DRUG_XML.encode())], pepper="p")   # νέα εισαγωγή: τίποτα δεν χάνεται
+    prof = await repo.patient_profile(patient_id=ref)
+    assert prof["clinical"]["g6pd_deficiency"] is True
+    [n] = await repo.list_notes("", patient_id=ref)
+    assert n["text"] == "Αλλεργία στην πενικιλίνη"
+    assert (await repo.advice_signature(patient_id=ref))[2]["g6pd"] is True, "η G6PD μπαίνει στη συμβουλή AI"
+
+    exp = await cy_gdpr.export(CY, f"cy:{ref}")
+    assert exp["counts"]["notes"] == 1
+    await cy_gdpr.erase(CY, f"cy:{ref}")
+    assert await repo.list_notes("", patient_id=ref) == [], "τα σχόλια σβήνονται με τη διαγραφή GDPR"
+    assert "clinical" not in await mem["cy_patients"].find_one({"pseudo_id": ref})

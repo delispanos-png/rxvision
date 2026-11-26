@@ -7,27 +7,35 @@
    πελάτη μπροστά του — η πληροφορία πρέπει να τον βρει εκεί που ήδη κοιτάζει, αλλιώς το χρέος
    θυμάται μόνο όποιος το έδωσε.
 
-   ΔΕΝ χτυπάει το API αν το πρόσθετο είναι κλειστό (θα γύριζε 403 σε κάθε άνοιγμα καρτέλας). */
+   ΔΕΝ χτυπάει το API αν το πρόσθετο είναι κλειστό (θα γύριζε 403 σε κάθε άνοιγμα καρτέλας).
+
+   ΚΥΠΡΟΣ (26/11/2026): τα δανεικά ζουν στο `cy_loans` (/cy/loans) με κλειδί το ψευδώνυμο ΓεΣΥ, που είναι και
+   το `patientId` της Εικόνας πελάτη. Πριν, η ειδοποίηση ήταν κρυμμένη στην Κύπρο και το δανεικό δεν φαινόταν. */
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { HandCoins } from "lucide-react";
 import { api } from "@/lib/apiClient";
+import { useCountry } from "@/lib/cy";
 import { useAddonState } from "@/components/layout/AddonSection";
 import { useT } from "@/store/prefStore";
 
-type Item = { name?: string; gtin?: string; lot?: string };
-type Loan = { _id: string; items?: Item[]; created_at?: string };
+type Item = { name?: string; gtin?: string; lot?: string; status?: string };
+type Loan = { _id?: string; id?: string; items?: Item[]; created_at?: string };
 
 const daysAgo = (s?: string) => (s ? Math.floor((Date.now() - new Date(s).getTime()) / 86400000) : 0);
 
 export function AdvanceLoanNotice({ patientId, compact = false }: { patientId?: string | null; compact?: boolean }) {
   const t = useT();
   const on = useAddonState("advance_dispensing").state === "on";
+  const country = useCountry();
+  const isCy = country === "CY";
   const q = useQuery({
-    queryKey: ["adv", "for-patient", patientId],
-    queryFn: () => api<{ items: Loan[]; count: number }>(`/advance-dispensings/for-patient?ref=${encodeURIComponent(patientId!)}`),
-    enabled: on && !!patientId,
+    queryKey: ["adv", "for-patient", country, patientId],
+    queryFn: () => isCy
+      ? api<{ items: Loan[] }>(`/cy/loans?state=open&patient_ref=${encodeURIComponent(patientId!)}`)
+      : api<{ items: Loan[]; count: number }>(`/advance-dispensings/for-patient?ref=${encodeURIComponent(patientId!)}`),
+    enabled: on && !!patientId && !!country,
     retry: false,
     staleTime: 60_000,
   });
@@ -35,7 +43,9 @@ export function AdvanceLoanNotice({ patientId, compact = false }: { patientId?: 
   const loans = q.data?.items || [];
   if (!loans.length) return null;
 
-  const names = loans.flatMap((l) => (l.items || []).map((i) => i.name || i.gtin || i.lot)).filter(Boolean);
+  // ό,τι έχει ήδη ξεχρεωθεί (status ≠ open) δεν το χρωστά πια
+  const names = loans.flatMap((l) => (l.items || []).filter((i) => !i.status || i.status === "open")
+    .map((i) => i.name || i.gtin || i.lot)).filter(Boolean);
   const oldest = Math.max(...loans.map((l) => daysAgo(l.created_at)));
 
   if (compact) {
@@ -57,7 +67,7 @@ export function AdvanceLoanNotice({ patientId, compact = false }: { patientId?: 
         {names.slice(0, 4).join(", ")}{names.length > 4 ? "…" : ""}
         {oldest > 0 ? ` · ${t(`εδώ και ${oldest} ημέρες`, `${oldest} days ago`)}` : ""}
       </span>
-      <Link href="/patients/advance"
+      <Link href={isCy ? "/cy/loans" : "/patients/advance"}
         className="ml-auto rounded-lg border border-amber-400 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:text-amber-200">
         {t("Διαχείριση", "Manage")}
       </Link>

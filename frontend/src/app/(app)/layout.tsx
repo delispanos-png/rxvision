@@ -15,6 +15,7 @@ import { SupportLiveHost } from "@/components/support/SupportLiveHost";
 import { ExportGateSync } from "@/components/export/ExportGateSync";
 import { CountryGate } from "@/components/layout/CountryGate";
 import { CyFolderSync } from "@/components/cy/CyFolderSync";
+import { DataStartSync } from "@/components/layout/DataStartSync";
 
 // Backend always enforces permissions/modules; the sidebar is presentational.
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -24,6 +25,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <ClarityScript surface="app" />
       <CountryGate />
       <CyFolderSync />
+      <DataStartSync />
       <OnboardingGate />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">

@@ -21,6 +21,8 @@ export default function PortalRegister() {
       case "amka_exists": return t("Υπάρχει ήδη λογαριασμός με αυτό το ΑΜΚΑ.", "An account with this ΑΜΚΑ already exists.");
       case "approval_required":
         return t("Δεν βρέθηκαν στοιχεία επικοινωνίας σου σε κάποιο φαρμακείο του δικτύου, ώστε να επιβεβαιώσουμε την ταυτότητά σου. Ζήτησε από το φαρμακείο σου να δημιουργήσει τον λογαριασμό σου.", "We couldn't find your contact details at any pharmacy in the network to verify your identity. Please ask your pharmacy to create your account.");
+      case "terms_required": return t("Χρειάζεται να αποδεχτείς τους όρους και την ενημέρωση απορρήτου.", "Please accept the terms and the privacy notice.");
+      case "health_consent_required": return t("Χωρίς συγκατάθεση για τα δεδομένα υγείας η πύλη δεν μπορεί να σου δείξει τις συνταγές σου.", "Without consent for health data the portal cannot show your prescriptions.");
       case "otp_send_failed": return t("Δεν στάλθηκε ο κωδικός. Δοκίμασε ξανά σε λίγο.", "The code couldn't be sent. Please try again shortly.");
       case "otp_invalid": return t("Λάθος κωδικός. Δοκίμασε ξανά.", "Wrong code. Please try again.");
       case "otp_expired": return t("Ο κωδικός έληξε. Ξεκίνα ξανά την εγγραφή.", "The code has expired. Please start registration again.");
@@ -32,6 +34,8 @@ export default function PortalRegister() {
   const [step, setStep] = useState<"form" | "otp">("form");
   const [f, setF] = useState({ first_name: "", last_name: "", email: "", phone: "", amka: "", password: "" });
   const [ph, setPh] = useState<string | null>(null);   // «αγαπημένο» φαρμακείο από QR πάγκου (?ph=)
+  // Συγκαταθέσεις (ίδιες με την αίτηση QR της Κύπρου): όροι + δεδομένα υγείας υποχρεωτικά, τα υπόλοιπα προαιρετικά
+  const [c, setC] = useState({ accept_terms: false, health_data: false, marketing: false, email: false, sms: false, viber: false, push: false });
   const [challenge, setChallenge] = useState("");
   const [channels, setChannels] = useState<Channel[]>([]);
   const [code, setCode] = useState("");
@@ -47,7 +51,9 @@ export default function PortalRegister() {
     e.preventDefault();
     setErr(""); setBusy(true);
     try {
-      const r = await patientAuth<OtpStart>("/patient/auth/register", { ...f, pharmacy: ph || undefined });
+      const r = await patientAuth<OtpStart>("/patient/auth/register", { ...f, pharmacy: ph || undefined,
+        accept_terms: c.accept_terms, health_data: c.health_data, marketing: c.marketing,
+        channels: { email: c.email, sms: c.sms, viber: c.viber, push: c.push } });
       setChallenge(r.challenge_id);
       setChannels(r.channels || []);
       setStep("otp");
@@ -94,8 +100,24 @@ export default function PortalRegister() {
           <input required placeholder={t("Τηλέφωνο", "Phone")} value={f.phone} onChange={set("phone")} className={inp} />
           <input required placeholder="ΑΜΚΑ" value={f.amka} onChange={set("amka")} className={inp} />
           <input type="password" required minLength={8} placeholder={t("Κωδικός (8+ χαρακτήρες)", "Password (8+ characters)")} value={f.password} onChange={set("password")} className={inp} />
+          <div className="space-y-2 rounded-xl bg-slate-50 p-3 text-xs text-slate-700">
+            <label className="flex gap-2"><input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300" checked={c.accept_terms} onChange={(e) => setC({ ...c, accept_terms: e.target.checked })} />
+              <span><b>{t("Αποδέχομαι", "I accept")}</b> {t("τους", "the")} <Link href="/portal/terms" target="_blank" className="text-brand-600 underline">{t("Όρους χρήσης της πύλης", "portal terms of use")}</Link> {t("και έλαβα γνώση της", "and have read the")} <Link href="/portal/privacy" target="_blank" className="text-brand-600 underline">{t("Ενημέρωσης απορρήτου", "privacy notice")}</Link>. *</span></label>
+            <label className="flex gap-2"><input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300" checked={c.health_data} onChange={(e) => setC({ ...c, health_data: e.target.checked })} />
+              <span>{t("Συναινώ να βλέπω στην πύλη τις συνταγές και τα δεδομένα υγείας μου (άρθρο 9 ΓΚΠΔ). *", "I consent to viewing my prescriptions and health data in the portal (GDPR Art. 9). *")}</span></label>
+            <div className="border-t border-slate-200 pt-2">
+              <div className="mb-1 font-semibold text-slate-800">{t("Πώς θέλεις να επικοινωνεί μαζί σου το φαρμακείο (προαιρετικό):", "How the pharmacy may contact you (optional):")}</div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {(["email", "sms", "viber", "push"] as const).map((k) => (
+                  <label key={k} className="inline-flex items-center gap-1.5"><input type="checkbox" className="h-4 w-4 rounded border-slate-300" checked={c[k]} onChange={(e) => setC({ ...c, [k]: e.target.checked })} />
+                    {k === "email" ? "Email" : k === "sms" ? "SMS" : k === "viber" ? "Viber" : t("Ειδοποιήσεις εφαρμογής", "App notifications")}</label>))}
+              </div>
+              <label className="mt-2 flex gap-2"><input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300" checked={c.marketing} onChange={(e) => setC({ ...c, marketing: e.target.checked })} />
+                <span>{t("Θέλω να λαμβάνω και προσφορές/ενημερώσεις του φαρμακείου από τα κανάλια που διάλεξα.", "I also want pharmacy offers/news through the channels I chose.")}</span></label>
+            </div>
+          </div>
           <p className="rounded-xl bg-brand-50 px-3 py-2 text-[11px] text-brand-600">{t("🔒 Για την ασφάλειά σου, θα στείλουμε έναν κωδικό επιβεβαίωσης στο τηλέφωνο ή email που έχει το φαρμακείο σου καταχωρημένο για εσένα.", "🔒 For your security, we'll send a verification code to the phone or email your pharmacy has on file for you.")}</p>
-          <button type="submit" disabled={busy} className="w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white shadow-sm shadow-brand-500/30 hover:bg-brand-700 disabled:opacity-60">
+          <button type="submit" disabled={busy || !c.accept_terms || !c.health_data} className="w-full rounded-xl bg-brand-600 py-3 text-sm font-semibold text-white shadow-sm shadow-brand-500/30 hover:bg-brand-700 disabled:opacity-60">
             {busy ? t("Αποστολή κωδικού…", "Sending code…") : t("Συνέχεια", "Continue")}
           </button>
           <p className="text-center text-sm text-slate-500">

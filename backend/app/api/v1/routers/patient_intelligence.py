@@ -38,7 +38,7 @@ async def _repo(ctx: TenantContext) -> PatientIntelligenceRepository:
 
 
 async def _greek_only(ctx: TenantContext) -> None:
-    """Λειτουργίες που στηρίζονται σε ΑΜΚΑ/ΗΔΥΚΑ (σχόλια, G6PD, AI συμβουλή, πύλη με ΑΜΚΑ):
+    """Λειτουργίες που στηρίζονται σε ΑΜΚΑ/ΗΔΥΚΑ (πύλη με ΑΜΚΑ κ.ά.· σχόλια & G6PD έχουν πλέον και Κύπρο):
     στην Κύπρο δεν υπάρχουν — 404, όπως κάθε ελληνικό κύκλωμα."""
     if await _is_cy(ctx):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found")
@@ -180,9 +180,9 @@ async def profile_advice(body: AdviceIn,
         ("θεραπευτικές_ομάδες_ATC" if cy else "παθήσεις"):
             [f"{c['code']} {c.get('title') or ''}".strip() for c in prof["conditions"]],
         "βασικά_φάρμακα": [m["name"] for m in prof["medicines"][:8]],
-        # Κύπρος: δεν καταγράφεται G6PD → ΟΧΙ «όχι» (θα ήταν ψευδής βεβαιότητα)· απλώς παραλείπεται
-        "έλλειψη_ενζύμου_G6PD": (None if cy else "ΝΑΙ — προσοχή σε οξειδωτικά φάρμακα"
-                                 if prof.get("clinical", {}).get("g6pd_deficiency") else "όχι"),
+        # Κύπρος: G6PD μόνο όταν το σημείωσε ο φαρμακοποιός· «όχι» θα ήταν ψευδής βεβαιότητα → παραλείπεται
+        "έλλειψη_ενζύμου_G6PD": ("ΝΑΙ — προσοχή σε οξειδωτικά φάρμακα"
+                                 if prof.get("clinical", {}).get("g6pd_deficiency") else (None if cy else "όχι")),
     }
     facts = {k: v for k, v in facts.items() if v is not None}
     res = await patient_advice.advise(facts, ctx.tenant_id, country="CY" if cy else None)
@@ -198,43 +198,44 @@ async def profile_advice(body: AdviceIn,
 
 
 # ── pharmacist notes / comments on a patient ────────────────────────────────
+# Ελλάδα: με ΑΜΚΑ. Κύπρος (26/11/2026): με το ψευδώνυμο ΓεΣΥ (`patient_id`) — ίδια οθόνη, ίδιες ενέργειες.
 class NoteIn(BaseModel):
-    amka: str
+    amka: str = ""
+    patient_id: str | None = None
     text: str
 
 
 @router.get("/profile/notes")
-async def profile_notes(amka: str = Query(..., min_length=3),
+async def profile_notes(amka: str = Query(""), patient_id: str | None = Query(None),
                         ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    await _greek_only(ctx)
-    return {"items": await (await _repo(ctx)).list_notes(amka)}
+    if len(amka) < 3 and not patient_id:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "amka_or_patient_id_required")
+    return {"items": await (await _repo(ctx)).list_notes(amka, patient_id=patient_id)}
 
 
 @router.post("/profile/notes")
 async def add_profile_note(body: NoteIn,
                            ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    await _greek_only(ctx)
-    return await (await _repo(ctx)).add_note(body.amka, body.text, ctx.user_id)
+    return await (await _repo(ctx)).add_note(body.amka, body.text, ctx.user_id, patient_id=body.patient_id)
 
 
 @router.delete("/profile/notes/{note_id}")
 async def delete_profile_note(note_id: str,
                               ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    await _greek_only(ctx)
     return await (await _repo(ctx)).delete_note(note_id)
 
 
 # ── clinical flag: G6PD enzyme deficiency ───────────────────────────────────
 class G6pdIn(BaseModel):
-    amka: str
+    amka: str = ""
+    patient_id: str | None = None
     g6pd_deficiency: bool
 
 
 @router.post("/profile/g6pd")
 async def set_g6pd(body: G6pdIn,
                    ctx: TenantContext = Depends(require("patients:read", module=_MODULE))):
-    await _greek_only(ctx)
-    res = await (await _repo(ctx)).set_g6pd(body.amka, body.g6pd_deficiency)
+    res = await (await _repo(ctx)).set_g6pd(body.amka, body.g6pd_deficiency, patient_id=body.patient_id)
     if not res.get("ok"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, res.get("error", "patient_not_found"))
     return res

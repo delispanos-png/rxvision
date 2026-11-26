@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useT } from "@/store/prefStore";
-import { PALETTE, BASE_GRID, axisStyle } from "./theme";
+import { PALETTE, BASE_GRID, axisStyle, demoMoneyAxis } from "./theme";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -32,14 +32,15 @@ export function BarChart({
     ...axisStyle,
     axisLabel: { ...axisStyle.axisLabel, formatter: truncate },
   };
-  const val = { type: "value" as const, ...axisStyle };
+  const dm = demoMoneyAxis([name]);       // «Πελάτης παρουσίασης»: ποσά € → 12.3XX
+  const val = { type: "value" as const, ...axisStyle, ...(dm.axisLabel ? { axisLabel: { ...axisStyle.axisLabel, ...dm.axisLabel } } : {}) };
 
   const option = {
     color: PALETTE,
     // containLabel lets ECharts reserve exactly the space the (long Greek) category
     // labels need (auto-sized at any width — no fixed 120px gutter crushing mobile).
     grid: { ...BASE_GRID, left: horizontal ? 8 : BASE_GRID.left, containLabel: true },
-    tooltip: { appendToBody: true, confine: true, trigger: "axis", axisPointer: { type: "shadow" } },
+    tooltip: { ...(dm.valueFormatter ? { valueFormatter: dm.valueFormatter } : {}), appendToBody: true, confine: true, trigger: "axis", axisPointer: { type: "shadow" } },
     xAxis: horizontal ? val : cat,
     yAxis: horizontal ? { ...cat, inverse: true } : val,
     series: [

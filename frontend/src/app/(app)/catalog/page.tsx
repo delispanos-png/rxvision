@@ -10,6 +10,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { useCategoryTree, catPath } from "@/components/catalog/CategoryPicker";
 import { DateInput } from "@/components/ui/DateInput";
 
+import { demoMask } from "@/lib/formatters";
 type Product = {
   barcode: string; name: string; description_short?: string | null; description_long?: string | null;
   photo_url?: string | null; image_id?: string | null; images?: string[]; usage_video_url?: string | null; price_cents: number; wholesale_cents?: number; type: string; category?: string | null;
@@ -19,7 +20,7 @@ type Product = {
   sale_starts_at?: string | null; sale_ends_at?: string | null; highlights?: string[]; related_barcodes?: string[]; points_multiplier?: number;
 };
 type ListRes = { items: Product[]; total: number };
-const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
+const eur = (c: number) => demoMask((c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €");
 const EMPTY: Product = { barcode: "", name: "", price_cents: 0, type: "parapharmacy", discount_pct: 0, stock_qty: 0, tags: [], featured: false };
 const LOW_STOCK = 5;
 type TaxClass = { type: string; label: string; discount: boolean; auto: boolean; categories: string[] };

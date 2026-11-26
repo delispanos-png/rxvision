@@ -296,13 +296,24 @@ async def warehouse(q: str = "", type: str | None = None, low_stock: bool = Fals
                     focus: str | None = None, origin: str | None = None,
                     ctx: TenantContext = Depends(require(_PERM, module=_WH))):
     repo = _repo(ctx)
-    return {**await repo.warehouse(q=q, ptype=type, low_stock=low_stock, expiring=expiring,
-                                   include_inactive=include_inactive, cat1=cat1, cat2=cat2, cat3=cat3,
-                                   for_sale=for_sale, stock=stock, supplier=supplier,
-                                   no_image=no_image, no_category=no_category, origin=origin,
-                                   page=page, page_size=page_size, focus=focus),
-            "summary": await repo.warehouse_summary(),
-            "suppliers": await repo.warehouse_suppliers()}
+    res = await repo.warehouse(q=q, ptype=type, low_stock=low_stock, expiring=expiring,
+                               include_inactive=include_inactive, cat1=cat1, cat2=cat2, cat3=cat3,
+                               for_sale=for_sale, stock=stock, supplier=supplier,
+                               no_image=no_image, no_category=no_category, origin=origin,
+                               page=page, page_size=page_size, focus=focus)
+    sups = await repo.warehouse_suppliers()
+    from app.services.cy.gate import tenant_country
+    if await tenant_country(ctx.tenant_id) == "CY":
+        # Κύπρος: τιμές/απόθεμα ΜΟΝΟ των φαρμακαποθηκών του φαρμακείου (ίδιος κανόνας με την Πρόταση παραγγελίας)
+        from app.services.cy.pharmacyone import my_suppliers, only_mine
+        mine = await my_suppliers(ctx.tenant_id)
+        for it in res.get("items") or []:
+            it["suppliers"] = only_mine(it.get("suppliers"), mine)
+            if it.get("supplier") and it["supplier"] not in (mine or []):
+                it["supplier"] = None
+        sups = [x for x in sups if x in (mine or [])]
+        res["my_suppliers"] = mine
+    return {**res, "summary": await repo.warehouse_summary(), "suppliers": sups}
 
 
 class FlagsIn(BaseModel):

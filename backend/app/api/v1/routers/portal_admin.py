@@ -194,6 +194,42 @@ async def invite_customer(body: InviteIn, ctx: TenantContext = Depends(require(_
                                              tenant_id=ctx.tenant_id, pharmacy_name=ph)
 
 
+@router.get("/consent-form")
+async def consent_form_info(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Στοιχεία του φαρμακείου (υπεύθυνος επεξεργασίας) για το έντυπο εγγραφής & συγκατάθεσης πελάτη."""
+    from app.services.cy.gate import tenant_country
+    t = await shared_db()["tenants"].find_one(  # tenant-ok: own tenant
+        {"_id": ctx.tenant_id}, {"name": 1, "company": 1, "billing_profile": 1}) or {}
+    bp, co = t.get("billing_profile") or {}, t.get("company") or {}
+    pick = lambda k: (bp.get(k) or co.get(k) or "")  # noqa: E731
+    return {"name": co.get("name") or bp.get("title") or bp.get("name") or t.get("name") or "",
+            "afm": pick("afm"), "doy": pick("doy"), "address": pick("address"), "city": pick("city"),
+            "postal_code": pick("postal_code"), "phone": pick("phone"), "email": pick("email"),
+            "country": await tenant_country(ctx.tenant_id) or "GR"}
+
+
+@router.get("/join-requests")
+async def join_requests(ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """Κύπρος: αιτήσεις από το QR του πάγκου που περιμένουν έγκριση (Ελλάδα: OTP, καμία αίτηση)."""
+    if not await _is_cy(ctx):
+        return {"items": []}
+    from app.services.cy import portal as cy_portal
+    return {"items": await cy_portal.join_requests(ctx.tenant_id)}
+
+
+@router.post("/join-requests/{request_id}/{decision}")
+async def decide_join_request(request_id: str, decision: str,
+                              ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):
+    """«Έγκριση» → λογαριασμός + email ορισμού κωδικού (ίδιο με την πρόσκληση) · «Απόρριψη» → τίποτα."""
+    from fastapi import HTTPException, status
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not_found")
+    if not await _is_cy(ctx):
+        return {"ok": False, "error": "not_found"}
+    from app.services.cy import portal as cy_portal
+    return await cy_portal.join_decide(ctx.tenant_id, request_id, approve=decision == "approve", by=ctx.user_id)
+
+
 @router.delete("/portal-customers/{account_id}")
 async def remove_portal_customer(account_id: str,
                                  ctx: TenantContext = Depends(require(_PERM, module=_MODULE))):

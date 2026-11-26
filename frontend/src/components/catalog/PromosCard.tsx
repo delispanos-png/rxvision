@@ -8,6 +8,7 @@ import { Ticket, Package, Plus, Trash2, Pencil, X } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
+import { demoMask } from "@/lib/formatters";
 type Coupon = {
   _id?: string; code: string; kind: "pct" | "amount"; value: number;
   min_order_cents: number; max_uses: number; used_count?: number;
@@ -21,7 +22,7 @@ type Bundle = {
 };
 const EMPTY_C: Coupon = { code: "", kind: "pct", value: 10, min_order_cents: 0, max_uses: 0, active: true };
 const EMPTY_B: Bundle = { name: "", kind: "nplusm", active: true, barcode: "", buy_qty: 2, free_qty: 1, lines: [{ barcode: "", qty: 1 }, { barcode: "", qty: 1 }], discount_pct: 10 };
-const eur = (c: number) => (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €";
+const eur = (c: number) => demoMask((c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2 }) + " €");
 
 export function PromosCard() {
   const t = useT();

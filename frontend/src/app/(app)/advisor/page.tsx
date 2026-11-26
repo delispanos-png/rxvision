@@ -1,5 +1,5 @@
 "use client";
-import { fmtDec } from "@/lib/formatters";
+import { fmtDec, demoMask } from "@/lib/formatters";
 
 import { useQuery } from "@tanstack/react-query";
 import { Sparkles, ArrowUpRight, ArrowDownRight } from "lucide-react";
@@ -31,7 +31,7 @@ const makeVerdict = (t: T): Record<string, { label: string; cls: string }> => ({
   divest: { label: t("🔴 Μη επενδύεις", "🔴 Divest"), cls: "bg-rose-100 text-rose-700" },
 });
 
-const eur = (c: number | null) => c == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100);
+const eur = (c: number | null) => demoMask(c == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 }).format((c || 0) / 100));
 const num = (n: number | null) => new Intl.NumberFormat("el-GR").format(n || 0);
 
 function Delta({ delta, invert = false }: { delta: number | null; invert?: boolean }) {

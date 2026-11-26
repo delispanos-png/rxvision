@@ -116,6 +116,13 @@ class CySettlementRepository(BaseRepository):
     collection_name = "cy_settlements"
 
 
+class CyPortalRequestRepository(BaseRepository):
+    """Αιτήσεις εγγραφής στην πύλη από το QR του πάγκου (Κύπρος, 26/11/2026). Ο πελάτης τη στέλνει μόνος του·
+    λογαριασμός ανοίγει ΜΟΝΟ όταν ο φαρμακοποιός την εγκρίνει (βλέπει την ταυτότητα στον πάγκο). Μετά την
+    απόφαση τα στοιχεία ταυτότητας σβήνονται· οι εκκρεμείς λήγουν μόνες τους (TTL `expires_at`)."""
+    collection_name = "cy_portal_requests"
+
+
 async def find_all(repo: BaseRepository, query: dict, *, sort: list[tuple[str, int]] | None = None) -> list[dict]:
     """Συντόμευση για το `BaseRepository.find_all` (ο ΕΝΑΣ ορισμός: όλα, χωρίς όριο σελίδας)."""
     return await repo.find_all(query, sort=sort)

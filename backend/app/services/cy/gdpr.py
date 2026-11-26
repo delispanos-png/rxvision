@@ -39,11 +39,24 @@ async def export(tenant_id: str, subject_id: str) -> dict:
         raise LookupError("subject_not_found")
     disp = await find_all(CyDispensingRepository(tenant_id=tenant_id), {"patient_ref": ref},   # GDPR: ΠΛΗΡΗΣ εξαγωγή
                           sort=[("dispensed_at", -1)])
+    notes = await _notes(tenant_id, ref)
     return jsonsafe({
         "exported_at": datetime.now(tz=timezone.utc).isoformat(),
         "subject_id": subject_id, "tenant_id": tenant_id,
-        "identity": patient, "cy_dispensings": disp, "counts": {"dispensings": len(disp)},
+        "identity": patient, "cy_dispensings": disp, "pharmacist_notes": notes,
+        "counts": {"dispensings": len(disp), "notes": len(notes)},
     })
+
+
+async def _notes(tenant_id: str, ref: str) -> list[dict]:
+    """Σχόλια φαρμακοποιού (κοινό `patient_notes`, μέσω της καρτέλας-γέφυρας του πελάτη ΓεΣΥ)."""
+    from app.core.db import shared_db
+    from app.repositories.patient_portal import PatientAccountRepository
+    shell = await PatientAccountRepository().cy_shell_id(tenant_id, ref)
+    if not shell:
+        return []
+    return [{"text": n.get("text"), "at": n.get("at")} async for n in shared_db()["patient_notes"].find(  # tenant-ok
+        {"tenant_id": tenant_id, "patient_ref": shell}).sort("at", -1)]
 
 
 async def erase(tenant_id: str, subject_id: str) -> dict:
@@ -52,8 +65,13 @@ async def erase(tenant_id: str, subject_id: str) -> dict:
     if not await repo.find_one({"pseudo_id": ref}):
         raise LookupError("subject_not_found")
     now = datetime.now(tz=timezone.utc)
+    from app.core.db import shared_db
+    from app.repositories.patient_portal import PatientAccountRepository
+    shell = await PatientAccountRepository().cy_shell_id(tenant_id, ref)
+    if shell:                    # τα σχόλια είναι ελεύθερο κείμενο → μπορεί να ταυτοποιούν: διαγράφονται
+        await shared_db()["patient_notes"].delete_many({"tenant_id": tenant_id, "patient_ref": shell})  # tenant-ok
     await repo.update_one({"pseudo_id": ref},
-                          {"$unset": {f: "" for f in DIRECT_IDENTIFIERS},
+                          {"$unset": {**{f: "" for f in DIRECT_IDENTIFIERS}, "clinical": ""},
                            "$set": {"erased": True, "erased_at": now, "processing_restricted": True}})
     return {"subject_id": subject_id, "identifiers_stripped": list(DIRECT_IDENTIFIERS),
             "legal_hold_kept": ["cy_dispensings"], "erased_at": now.isoformat()}

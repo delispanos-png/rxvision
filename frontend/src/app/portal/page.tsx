@@ -1370,7 +1370,8 @@ export default function PortalHome() {
             με τις «Συνταγές» (owner + «me»): γραμμένο μία φορά, φαίνεται και στα δύο σημεία. */}
         {isCy && <div className="mb-4"><CyPharmacyQr owner={me.profile.email ?? "me"} button /></div>}
         {/* Κάρτα πιστότητας — γρήγορη πρόσβαση από την Αρχική (ο πελάτης δεν την ψάχνει) */}
-        {loyalty?.enabled && loyalty.member && (
+        {/* Κύπρος: ΕΝΑ QR — το QR ΓεΣΥ (πάνω) ταυτοποιεί και για τους πόντους· καμία δεύτερη κάρτα */}
+        {!isCy && loyalty?.enabled && loyalty.member && (
           <button onClick={() => setShowCard(true)}
             className="mb-4 flex w-full items-center gap-3 rounded-2xl bg-gradient-to-r from-amber-400 to-rose-400 px-4 py-3 text-left text-white shadow-lg shadow-amber-500/30 transition hover:brightness-105">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/20"><Gift className="h-5 w-5" /></span>

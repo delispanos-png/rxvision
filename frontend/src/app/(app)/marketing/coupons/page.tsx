@@ -9,6 +9,7 @@ import { appAlert } from "@/store/dialogStore";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
+import { demoMask } from "@/lib/formatters";
 type Coupon = {
   code: string; reward_type: string; discount_type: string; discount_value: number;
   service_name: string | null; service_free: boolean; valid_until: string | null;
@@ -17,7 +18,7 @@ type Coupon = {
 };
 type Svc = { id: string; name: string };
 
-const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 2 })} €`;
+const eur = (c: number) => demoMask(`${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 2 })} €`);
 const ddmmyyyy = (iso?: string | null) => {
   if (!iso) return "—";
   const d = new Date(iso);

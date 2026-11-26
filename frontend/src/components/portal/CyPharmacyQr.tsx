@@ -67,6 +67,9 @@ export function CyPharmacyQr({ owner, forRef, forName, button }: { owner: string
             {t(`Δείξ' το στο φαρμακείο. Στην πύλη ΓεΣΥ ο φαρμακοποιός διαλέγει «${docLabel(saved.doc_type)}» και το σκανάρει: γράφονται μόνα τους ο αριθμός και η ημερομηνία γέννησης.`,
               `Show it at the pharmacy. In the GHS portal the pharmacist selects «${docLabel(saved.doc_type)}» and scans it: the number and date of birth are filled in automatically.`)}
           </p>
+          <p className="max-w-sm text-xs font-medium text-emerald-700">
+            {t("Το ίδιο QR ισχύει και για τους πόντους πιστότητας: ένα QR για όλα.", "The same QR also works for loyalty points: one QR for everything.")}
+          </p>
           <button type="button" onClick={() => { save(k, null); setSaved(null); }}
             className="inline-flex items-center gap-1 text-xs text-slate-500 underline">
             <Trash2 className="h-3.5 w-3.5" /> {t("Αφαίρεση από αυτή τη συσκευή", "Remove from this device")}

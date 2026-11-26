@@ -11,6 +11,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { PrintCardButton } from "@/components/loyalty/PrintCard";
 import { DateInput } from "@/components/ui/DateInput";
 
+import { demoMask } from "@/lib/formatters";
 type Cfg = { enabled: boolean; redeem_cart_policy?: "any" | "non_rx_only" | "off"; points_per_refill: number; cents_per_point: number; min_redeem_cents: number; welcome_cents: number; terms?: string; adherence_points_enabled: boolean; adherence_rule: string; points_per_adherence: number; adherence_streak_bonus: number; tier_multipliers_enabled: boolean; tier_multipliers: Record<string, number>; campaigns?: Campaign[]; points_expire_months?: number; referral_enabled?: boolean; referral_referrer_cents?: number; referral_referred_cents?: number; birthday_enabled?: boolean; birthday_bonus_cents?: number; pos_earn_enabled?: boolean; pos_earn_pct?: number };
 type Campaign = { name: string; start: string; end: string; multiplier_pct: number };
 type Candidate = { patient_ref: string; name: string; compliance: number | null };
@@ -20,7 +21,7 @@ type Overview = { pharmacy_name?: string; config: Cfg; kpis: { members: number; 
 
 type Reward = { _id?: string; id?: string; title: string; type: string; cost_points: number; cost_cents: number; note?: string; active?: boolean };
 
-const eur = (c?: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
+const eur = (c?: number) => demoMask(new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100));
 const TIER_CLS: Record<string, string> = { Bronze: "bg-amber-100 text-amber-800", Silver: "bg-slate-200 text-slate-700", Gold: "bg-yellow-100 text-yellow-800", Platinum: "bg-indigo-100 text-indigo-700" };
 const RTYPE: Record<string, { el: string; en: string; emoji: string; cls: string }> = {
   product: { el: "Προϊόν", en: "Product", emoji: "🛍️", cls: "bg-emerald-100 text-emerald-700" },
@@ -41,7 +42,8 @@ function Kpi({ icon: Icon, label, value, tint }: { icon: typeof Gift; label: str
 export default function LoyaltyPage() {
   const t = useT();
   // Κύπρος: «επαναλήψεις» = φάσεις συνταγής ΓεΣΥ (ίδιος ορισμός με τις Ανοιχτές συνταγές)
-  const openLabel = useCountry() === "CY" ? t("Φάσεις σε αναμονή", "Steps due") : t("Ανοιχτές επαναλήψεις", "Open refills");
+  const isCy = useCountry() === "CY";
+  const openLabel = isCy ? t("Φάσεις σε αναμονή", "Steps due") : t("Ανοιχτές επαναλήψεις", "Open refills");
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["loyalty"], queryFn: () => api<Overview>("/loyalty") });
   const [tab, setTab] = useState<string>("members");
@@ -61,9 +63,22 @@ export default function LoyaltyPage() {
 
   const cfg = data?.config;
 
-  function openByCode(raw: string) {
-    const ref = raw.replace(/^RXVL:/i, "").trim();
+  async function openByCode(raw: string) {
+    let ref = raw.replace(/^RXVL:/i, "").trim();
     if (!ref) return;
+    // Κύπρος: ΕΝΑ QR — το QR του ΓεΣΥ του πελάτη ([ταυτότητα/ARC] Tab [ΗΗ/ΜΜ/ΕΕΕΕ]) ταυτοποιεί και εδώ.
+    // Ο αριθμός γίνεται ψευδώνυμο στον server και πετιέται· δεν αποθηκεύεται πουθενά.
+    if (isCy && /\d{2}\/\d{2}\/\d{4}\s*$/.test(raw)) {
+      const r = await api<{ ok: boolean; error?: string; patient_ref?: string | null; name?: string }>("/cy/loyalty/identify",
+        { method: "POST", body: JSON.stringify({ code: raw }) }).catch(() => ({ ok: false, error: "x" } as { ok: boolean; error?: string; patient_ref?: string | null; name?: string }));
+      if (!r.ok || !r.patient_ref) {
+        setFindErr(r.error === "dob_mismatch" ? t("Η ημερομηνία γέννησης δεν ταιριάζει με τις συνταγές του πελάτη.", "The date of birth does not match the customer's prescriptions.")
+          : r.ok ? t(`Ο/η ${r.name ?? "πελάτης"} δεν είναι ακόμη μέλος. Γράψ' τον από την «Εγγραφή».`, `${r.name ?? "The customer"} is not a member yet. Enrol them from «Enrol».`)
+          : t("Δεν βρέθηκε πελάτης με αυτό το QR ΓεΣΥ στις συνταγές σου.", "No customer with this GHS QR in your prescriptions."));
+        return;
+      }
+      ref = r.patient_ref;
+    }
     const m = (data?.members ?? []).find((x) => x.patient_ref === ref);
     if (m) { setFindErr(""); setCode(""); setRedeemFor(m); }
     else setFindErr(t("Δεν βρέθηκε μέλος με αυτόν τον κωδικό.", "No member for this code."));
@@ -101,11 +116,19 @@ export default function LoyaltyPage() {
         <div className="space-y-4">
           {/* ταυτοποίηση πελάτη με σάρωση κάρτας (QR από my.rxvision) */}
           <div className="rx-card p-4">
-            <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">🪪 {t("Ταυτοποίηση πελάτη (κάρτα μέλους)", "Identify customer (member card)")}</div>
-            <p className="mt-0.5 text-xs text-slate-500">{t("Σκάναρε την κάρτα QR που δείχνει ο πελάτης από το my.rxvision, ή πληκτρολόγησε τον κωδικό.", "Scan the QR card the customer shows from my.rxvision, or type the code.")}</p>
+            <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">🪪 {isCy ? t("Ταυτοποίηση πελάτη (QR ΓεΣΥ)", "Identify customer (GHS QR)") : t("Ταυτοποίηση πελάτη (κάρτα μέλους)", "Identify customer (member card)")}</div>
+            <p className="mt-0.5 text-xs text-slate-500">{isCy
+              ? t("Σκάναρε το QR ΓεΣΥ που δείχνει ο πελάτης από το my.rxvision: το ίδιο QR με το οποίο βρίσκεις τις συνταγές του στην πύλη ΓεΣΥ. Ο αριθμός ταυτότητας δεν αποθηκεύεται.", "Scan the GHS QR the customer shows from my.rxvision: the same QR you use to find their prescriptions in the GHS portal. The ID number is not stored.")
+              : t("Σκάναρε την κάρτα QR που δείχνει ο πελάτης από το my.rxvision, ή πληκτρολόγησε τον κωδικό.", "Scan the QR card the customer shows from my.rxvision, or type the code.")}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <button onClick={() => { setFindErr(""); setScanOpen(true); }} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"><ScanLine className="h-4 w-4" /> {t("Σάρωση κάρτας", "Scan card")}</button>
-              <input value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => e.key === "Enter" && openByCode(code)} placeholder={t("…ή κωδικός κάρτας", "…or card code")}
+              <input value={code} onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void openByCode(code); }
+                  // Ο σαρωτής γράφει το QR ΓεΣΥ ως [ταυτότητα] Tab [ημερομηνία]: το Tab μένει ΜΕΣΑ στο πεδίο
+                  else if (isCy && e.key === "Tab" && code.trim() && !/\d{2}\/\d{2}\/\d{4}/.test(code)) { e.preventDefault(); setCode(code + "\t"); }
+                }}
+                placeholder={isCy ? t("…ή σάρωση με σαρωτή πάγκου", "…or scan with the counter scanner") : t("…ή κωδικός κάρτας", "…or card code")}
                 className="min-w-[200px] flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
               <button onClick={() => openByCode(code)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700">{t("Άνοιγμα", "Open")}</button>
             </div>
@@ -173,7 +196,7 @@ export default function LoyaltyPage() {
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1.5">
                         {/* φυσική κάρτα — για πελάτες χωρίς κινητό· ίδιος κωδικός με την ψηφιακή */}
-                        <PrintCardButton member={m} pharmacyName={data?.pharmacy_name ?? ""} />
+                        {!isCy && <PrintCardButton member={m} pharmacyName={data?.pharmacy_name ?? ""} />}
                         <button onClick={(e) => { e.stopPropagation(); setRedeemFor(m); }} disabled={m.balance_cents <= 0}
                           className="rounded-lg bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-40">{t("Εξαργύρωση", "Redeem")}</button>
                       </div>

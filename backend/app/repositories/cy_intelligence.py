@@ -365,7 +365,51 @@ class CyPatientIntelligenceRepository(PatientIntelligenceRepository):
                     meds.add(key_of(ln))
         _by, ag = _age_group(p.get("dob"))
         return ref, None, {"age": ag, "sex": _sex(p.get("gender")), "conditions": sorted(groups),
-                           "medicines": sorted(meds), "g6pd": False}
+                           "medicines": sorted(meds),
+                           "g6pd": bool((p.get("clinical") or {}).get("g6pd_deficiency"))}
+
+    # ── Σχόλια φαρμακοποιού & G6PD (Κύπρος, 26/11/2026) ─────────────────────────────────────────
+    # Ίδια οθόνη με την Ελλάδα. Κλειδί = ψευδώνυμο ΓεΣΥ (όχι ΑΜΚΑ). Τα σχόλια μένουν στο ΚΟΙΝΟ `patient_notes`
+    # με `patient_ref` = η καρτέλα-γέφυρα (`cy_shell`), όπως η πύλη/πιστότητα. Η G6PD στον πελάτη ΓεΣΥ
+    # (`cy_patients.clinical`), που η εισαγωγή XML δεν αγγίζει (ενημερώνει μόνο συγκεκριμένα πεδία).
+    async def _note_ref(self, amka: str | None, patient_id: str | None, *, create: bool):
+        from app.repositories.patient_portal import PatientAccountRepository
+        ref = await self.find_patient(amka=amka or None, patient_id=patient_id)
+        if not ref:
+            return None
+        accs = PatientAccountRepository()
+        if not create:
+            return await accs.cy_shell_id(self.tenant_id, ref)
+        p = await CyPatientRepository(tenant_id=self.tenant_id).find_one({"pseudo_id": ref})
+        return await accs.cy_shell(self.tenant_id, ref, (p or {}).get("full_name"))
+
+    async def list_notes(self, amka: str, patient_id: str | None = None) -> list[dict]:
+        shell = await self._note_ref(amka, patient_id, create=False)
+        if not shell:
+            return []
+        rows = [n async for n in self._db["patient_notes"].find(  # tenant-ok: tenant_id στο φίλτρο
+            {"tenant_id": self.tenant_id, "patient_ref": shell}).sort("at", -1).limit(200)]
+        return jsonsafe([{"id": str(n["_id"]), "text": n.get("text"), "by": n.get("by"), "at": n.get("at")}
+                         for n in rows])
+
+    async def add_note(self, amka: str, text: str, by: str | None = None, patient_id: str | None = None) -> dict:
+        text = (text or "").strip()[:2000]
+        if not text:
+            return {"ok": False, "error": "empty"}
+        shell = await self._note_ref(amka, patient_id, create=True)
+        if not shell:
+            return {"ok": False, "error": "patient_not_found"}
+        res = await self._db["patient_notes"].insert_one({  # tenant-ok: tenant_id στο έγγραφο
+            "tenant_id": self.tenant_id, "patient_ref": shell, "text": text, "by": by, "at": _now()})
+        return {"ok": True, "id": str(res.inserted_id)}
+
+    async def set_g6pd(self, amka: str, value: bool, patient_id: str | None = None) -> dict:
+        ref = await self.find_patient(amka=amka or None, patient_id=patient_id)
+        if not ref:
+            return {"ok": False, "error": "patient_not_found"}
+        await CyPatientRepository(tenant_id=self.tenant_id).update_one(
+            {"pseudo_id": ref}, {"$set": {"clinical.g6pd_deficiency": bool(value), "updated_at": _now()}})
+        return {"ok": True, "g6pd_deficiency": bool(value)}
 
     async def find_patient(self, *, amka: str | None = None, patient_id: str | None = None,
                            barcode: str | None = None) -> str | None:
@@ -514,7 +558,7 @@ class CyPatientIntelligenceRepository(PatientIntelligenceRepository):
                           "available": available, "lost_value": round(recoverable), "next_open": next_open},
             "missed_items": missed_items, "available_items": available_items,
             "flu": {"season": f"{fy}-{fy + 1}", "vaccinated": False, "date": None, "vaccine": None},
-            "programs": [], "clinical": {"g6pd_deficiency": False},
+            "programs": [], "clinical": {"g6pd_deficiency": bool(((p or {}).get("clinical") or {}).get("g6pd_deficiency"))},
             "segments": [{"key": s["key"], "label": s["label"]} for s in SEGMENTS
                          if any((m.get("atc") or "").startswith(tuple(s["atc"])) for m in medicines)
                          or (s["key"] == "diabetes" and cy_insights.is_diabetic(disp))],

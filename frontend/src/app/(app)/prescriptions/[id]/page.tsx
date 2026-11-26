@@ -9,7 +9,7 @@ import { InteractionsModal } from "@/components/clinical/InteractionsModal";
 import { api, queryKeys } from "@/lib/apiClient";
 import { PanelCard } from "@/components/ui/Card";
 import { CopyButton } from "@/components/ui/CopyButton";
-import { fmtDate, fmtDateTime } from "@/lib/formatters";
+import { fmtDate, fmtDateTime, demoMask } from "@/lib/formatters";
 import { RepeatTree } from "@/components/prescriptions/RepeatTree";
 import { useT } from "@/store/prefStore";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
@@ -219,8 +219,8 @@ type Idika = {
   lines: IdikaLine[];
 };
 
-const eur = (c: number) => new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100);
-const eurR = (v: number | null) => (v == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format(v));
+const eur = (c: number) => demoMask(new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format((c || 0) / 100));
+const eurR = (v: number | null) => demoMask((v == null ? "—" : new Intl.NumberFormat("el-GR", { style: "currency", currency: "EUR" }).format(v)));
 const dt = (s: string) => fmtDateTime(s);
 // GS1 ημερομηνία λήξης (YYMMDD) → DD/MM/YYYY (ή MM/YYYY αν η μέρα είναι 00 = τέλος μήνα).
 const fmtGs1Expiry = (v?: string | null) => {

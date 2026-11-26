@@ -9,7 +9,7 @@ import { appAlert } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { fmtNum } from "@/lib/formatters";
+import { fmtNum, demoMask } from "@/lib/formatters";
 
 type Cat = { key: string; label: string; icon: string; offer: string; patients: number; value: number };
 type Card = { id: string; icon: string; urgency: string; title: string; why: string; count: number; cta: string; segment: string; value: string | null;
@@ -25,7 +25,7 @@ type Dash = {
   country?: string;
 };
 
-const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`;
+const eur = (c: number) => demoMask(`${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`);
 const CHAN: Record<string, string> = { email: "Email", sms: "SMS", viber: "Viber", push: "Push" };
 
 export default function MarketingDashboard() {

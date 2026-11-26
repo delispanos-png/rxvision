@@ -5,7 +5,7 @@ import { Receipt, Coins, Wallet, ClipboardList, CheckCircle2, ShieldCheck, Info 
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
-import { fmtDate, fmtDateTime } from "@/lib/formatters";
+import { fmtDate, fmtDateTime, demoMask } from "@/lib/formatters";
 
 // backend charge_weekday: 0=Δευτέρα … 6=Κυριακή (Python weekday)
 const WEEKDAYS_EL = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"];
@@ -27,7 +27,7 @@ type Fees = {
   charges: Charge[];
 };
 
-const eur = (c?: number) => `${((c ?? 0) / 100).toFixed(2)}€`;
+const eur = (c?: number) => demoMask(`${((c ?? 0) / 100).toFixed(2)}€`);
 
 function Kpi({ icon: Icon, label, value, note, tint }: { icon: typeof Coins; label: string; value: string; note?: string; tint: string }) {
   return (

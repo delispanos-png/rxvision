@@ -43,6 +43,40 @@ _PORTAL_BASE = "https://my.rxvision.gr"
 LOGIN_URL = f"{_PORTAL_BASE}/portal/login"
 
 
+# Έκδοση κειμένου όρων/ενημέρωσης απορρήτου της πύλης πελατών (frontend: lib/portalConsent.ts — αλλάζουν ΜΑΖΙ).
+PORTAL_CONSENT_VERSION = "portal-consent-2026-11"
+CONSENT_CHANNELS = ("email", "sms", "viber", "push")
+
+
+def signup_consents(*, accept_terms: bool, health_data: bool, marketing: bool, channels: dict | None,
+                    source: str) -> dict:
+    """Οι συγκαταθέσεις της εγγραφής (Ελλάδα + Κύπρος). Όροι/ενημέρωση και δεδομένα υγείας: υποχρεωτικά
+    (χωρίς αυτά η πύλη δεν δείχνει συνταγές). Επικοινωνία ανά κανάλι και προωθητικά: προαιρετικά."""
+    if not accept_terms:
+        raise PatientError("terms_required")
+    if not health_data:
+        raise PatientError("health_consent_required")
+    return {"version": PORTAL_CONSENT_VERSION, "accepted_at": _now(), "source": source, "terms": True,
+            "health_data": True, "marketing": bool(marketing),
+            "channels": {c: bool((channels or {}).get(c)) for c in CONSENT_CHANNELS}}
+
+
+async def apply_signup_consents(account_id, consents: dict | None) -> None:
+    """Ο ΕΝΑΣ τρόπος που οι συγκαταθέσεις της εγγραφής γίνονται συγκαταθέσεις του λογαριασμού (με ίχνος στο
+    `patient_consent_log`, όπως όταν τις αλλάζει ο ίδιος από το Προφίλ)."""
+    if not consents:
+        return
+    from app.repositories.patient_portal import PatientAccountRepository
+    from app.services import notify_prefs
+    repo = PatientAccountRepository()
+    await repo.set_consent(account_id, "health_data", bool(consents.get("health_data")))
+    await repo.set_consent(account_id, "marketing", bool(consents.get("marketing")))
+    await repo.db["patient_accounts"].update_one(  # tenant-ok: global portal account
+        {"_id": account_id}, {"$set": {"terms_accepted": {
+            "version": consents.get("version"), "at": consents.get("accepted_at"), "source": consents.get("source")}}})
+    await notify_prefs.set_for_account(account_id, consents.get("channels") or {})
+
+
 class PatientError(Exception):
     pass
 
@@ -100,7 +134,7 @@ class PatientAuthService:
 
     async def start_registration(self, *, first_name: str, last_name: str, email: str,
                                  phone: str | None, amka: str, password: str,
-                                 pharmacy: str | None = None) -> dict:
+                                 pharmacy: str | None = None, consents: dict | None = None) -> dict:
         """Step 1 of self-registration. We do NOT create the account or link anything yet: instead we
         send a one-time code to a contact the PHARMACY already holds on file for this ΑΜΚΑ, proving the
         registrant actually owns that ΑΜΚΑ (a Greek ΑΜΚΑ is semi-guessable → without this, anyone who knows
@@ -126,6 +160,7 @@ class PatientAuthService:
             "first_name": first_name, "last_name": last_name, "email": email,
             "phone": (phone or "").strip(), "amka": amka,
             "password_hash": hash_password(password), "favorite_tenant_id": pharmacy,
+            "consents": consents,
             "created_at": _now(), "expires_at": _now() + timedelta(minutes=_OTP_TTL_MIN),
         })
         channels = await self._send_otp(code, emails, mobiles)
@@ -190,6 +225,10 @@ class PatientAuthService:
         if ch.get("favorite_tenant_id"):
             await self.repo.link_or_create(acc["_id"], ch["favorite_tenant_id"])
         links = await self.repo.refresh_links(acc["_id"], ch["amka"])
+        if ch.get("consents"):
+            await apply_signup_consents(acc["_id"], ch["consents"])
+            from app.services.patient_contact_sync import sync_from_account
+            await sync_from_account(acc["_id"], verify=True, include_consent=True)
         return await self._start_session(acc, links, meta)
 
     async def admin_create(self, *, first_name: str, last_name: str, email: str,

@@ -12,6 +12,7 @@ import { Celebrate } from "@/components/coach/Celebrate";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
+import { demoMask } from "@/lib/formatters";
 type Tone = "soft" | "firm" | "hard";
 type Who = { id: string | null; name: string | null; amka: string | null; mobile: string | null; phone: string | null; email: string | null };
 type Link = { kind: "profile" | "card" | "rx" | "inbox"; label: string; href: string };
@@ -97,7 +98,7 @@ const DOW_EL = ["Κυ", "Δε", "Τρ", "Τε", "Πέ", "Πα", "Σά"];
 const MONTH_EL = ["Ιαν", "Φεβ", "Μαρ", "Απρ", "Μάι", "Ιουν", "Ιουλ", "Αυγ", "Σεπ", "Οκτ", "Νοε", "Δεκ"];
 const mlabel = (m: string) => { const [y, mm] = m.split("-"); return `${MONTH_EL[Number(mm) - 1] ?? mm} ${y.slice(2)}`; };
 
-const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`;
+const eur = (c: number) => demoMask(`${((c || 0) / 100).toLocaleString("el-GR", { maximumFractionDigits: 0 })} €`);
 
 // Ο τόνος δεν είναι διακόσμηση — είναι η πληροφορία. Κόκκινο = το λέμε πολλές μέρες.
 const TONE: Record<Tone, { bar: string; chip: string; label: [string, string] }> = {

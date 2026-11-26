@@ -13,6 +13,7 @@ import { ScanLine, Loader2, X, UserRound, Package } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 
+import { demoMask } from "@/lib/formatters";
 type Exec = { external_id: string; executed_at?: string | null; product?: string | null;
               amount_total?: number | null; patient_id?: string | null;
               patient_name?: string | null; amka?: string | null };
@@ -28,7 +29,7 @@ type Res = { serial?: string | null; batch?: string | null; gtin?: string | null
 const fmt = (s?: string | null) =>
   s ? new Date(s).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric",
                                             hour: "2-digit", minute: "2-digit" }) : "—";
-const eur = (c?: number | null) => (c == null ? "" : `${(c / 100).toFixed(2)} €`);
+const eur = (c?: number | null) => demoMask((c == null ? "" : `${(c / 100).toFixed(2)} €`));
 
 export function CouponLookup() {
   const t = useT();

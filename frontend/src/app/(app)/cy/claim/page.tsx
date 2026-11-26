@@ -11,7 +11,7 @@ import { Download, Loader2 } from "lucide-react";
 import { api } from "@/lib/apiClient";
 import { DataTable, type Column } from "@/components/tables/DataTable";
 import { downloadCsv } from "@/lib/csv";
-import { fmtEur, fmtNum } from "@/lib/formatters";
+import { fmtEur, fmtNum, demoMask } from "@/lib/formatters";
 import { useT } from "@/store/prefStore";
 
 type Month = { month: string; dispensings: number; prescriptions: number; total: number; hio: number; copay: number;
@@ -25,7 +25,7 @@ const MONTHS = ["Ιανουάριος", "Φεβρουάριος", "Μάρτιο�
   "Σεπτέμβριος", "Οκτώβριος", "Νοέμβριος", "Δεκέμβριος"];
 const mname = (m: string) => `${MONTHS[Number(m.slice(5, 7)) - 1] ?? m} ${m.slice(0, 4)}`;
 const dmy = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
-const eur2 = (c: number) => (c / 100).toFixed(2).replace(".", ",");
+const eur2 = (c: number) => demoMask((c / 100).toFixed(2).replace(".", ","));
 
 export default function CyClaimPage() {
   const t = useT();

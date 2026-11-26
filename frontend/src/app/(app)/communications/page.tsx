@@ -8,7 +8,7 @@ import { api } from "@/lib/apiClient";
 import { useT } from "@/store/prefStore";
 import { PanelCard } from "@/components/ui/Card";
 import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
-import { fmtDate } from "@/lib/formatters";
+import { fmtDate, demoMask } from "@/lib/formatters";
 
 type Campaign = { id: string; channel: string; subject?: string | null; recipients: number; sent: number; failed: number; created_at: string };
 
@@ -93,7 +93,7 @@ export default function CommunicationsPage() {
   const costCents = count * unit;
   const balance = wallet.data?.balance_cents ?? 0;
   const insufficient = wallet.data != null && costCents > balance;  // δεν φτάνει το υπόλοιπο
-  const eur = (c: number) => `€${(c / 100).toFixed(2)}`;
+  const eur = (c: number) => demoMask(`€${(c / 100).toFixed(2)}`);
 
   const send = useMutation({
     mutationFn: () => api<{ campaign_id: string; recipients: number }>("/communications/send", { method: "POST", body: JSON.stringify({ channel, subject, message, segment, value: value || null, audience_rules: audRules, audience_name: audLabel || null, coupon: cpOn ? { enabled: true, discount_type: cpType, discount_value: cpType === "fixed" ? Math.round(parseFloat(cpVal || "0") * 100) : Math.round(parseFloat(cpVal || "0")), valid_days: parseInt(cpDays) || 30 } : null }) }),

@@ -8,6 +8,7 @@ import { useT } from "@/store/prefStore";
 import { QueryState } from "@/components/ui/QueryState";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 
+import { demoMask } from "@/lib/formatters";
 type Row = {
   patient_id: string; name: string; amka: string | null; deceased_at: string | null;
   unexecuted_rx: number; orders_count: number; orders_cents: number;
@@ -16,7 +17,7 @@ type Row = {
 type Res = { items: Row[]; totals: { patients: number; with_open: number; unexecuted_rx: number; orders_count: number; orders_cents: number } };
 type Job = { status?: string; total?: number; done?: number; deceased_found?: number; age_filled?: number; note?: string };
 
-const eur = (c: number) => `${((c || 0) / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+const eur = (c: number) => demoMask(`${((c || 0) / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`);
 const ddmmyyyy = (iso?: string | null) => {
   if (!iso) return "—";
   const d = new Date(iso);

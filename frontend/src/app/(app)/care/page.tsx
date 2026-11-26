@@ -22,6 +22,7 @@ import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { useCountry } from "@/lib/cy";
 
+import { demoMask } from "@/lib/formatters";
 type Row = { id: string; name: string; care_type?: string | null; members: number;
              balance: number; last_receipt_at?: string | null; last_receipt?: number | null };
 type Portfolio = { items: Row[]; total_open: number };
@@ -54,7 +55,7 @@ type Instr = { people: { patient_id: string; name: string;
 type Hit = { patient_id: string; name: string | null; amka: string | null };
 
 const eur = (c?: number | null) =>
-  ((c ?? 0) / 100).toLocaleString("el-GR", { style: "currency", currency: "EUR" });
+  demoMask(((c ?? 0) / 100).toLocaleString("el-GR", { style: "currency", currency: "EUR" }));
 const fmt = (s?: string | null) =>
   s ? new Date(s).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 const thisMonth = () => new Date().toISOString().slice(0, 7);

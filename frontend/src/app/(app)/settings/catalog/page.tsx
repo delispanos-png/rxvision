@@ -14,6 +14,7 @@ import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { appAlert } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 
+import { demoMask } from "@/lib/formatters";
 type Ev = { _id: string; run_at: string; kind: string; barcode: string; name?: string | null;
             type?: string | null; category?: string | null; price_cents?: number | null;
             old_price_cents?: number | null; old_name?: string | null };
@@ -27,7 +28,7 @@ type Cfg = { types: string[]; last_sync_at?: string | null;
              country?: "GR" | "CY"; source?: { name: string; items: number; updated_at?: string | null } };
 
 const eur = (c?: number | null) =>
-  c == null ? "—" : (c / 100).toLocaleString("el-GR", { style: "currency", currency: "EUR" });
+  demoMask(c == null ? "—" : (c / 100).toLocaleString("el-GR", { style: "currency", currency: "EUR" }));
 
 const fmt = (s?: string | null) =>
   s ? new Date(s).toLocaleString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric",

@@ -17,6 +17,7 @@ import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { ModuleGuard } from "@/components/layout/ModuleGuard";
 import { DateInput } from "@/components/ui/DateInput";
 
+import { demoMask } from "@/lib/formatters";
 type Member = { tenant_id: string; name: string };
 type Basis = "retail" | "wholesale" | "acquisition";
 type Group = { id: string; name: string; owner: boolean; members: Member[]; price_basis: Basis };
@@ -81,7 +82,7 @@ const BASIS_HINT: Record<Basis, string> = {
   acquisition: "τη γράφει ο φαρμακοποιός που δίνει",
 };
 const eur = (c?: number | null) =>
-  c == null ? "—" : (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
+  demoMask(c == null ? "—" : (c / 100).toLocaleString("el-GR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €");
 const toCents = (v: string) => {
   const n = Number(String(v).replace(/\./g, "").replace(",", "."));
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;

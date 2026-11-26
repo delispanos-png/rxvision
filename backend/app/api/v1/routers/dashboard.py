@@ -7,15 +7,40 @@ by BaseRepository.aggregate).
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import TenantContext, require
+from app.core.deps import TenantContext, get_current_context, require
 from app.repositories.prescriptions import PrescriptionRepository
+from app.services.stats_exclusion import COUNTABLE_EXEC
 
 router = APIRouter()
+ATHENS = ZoneInfo("Europe/Athens")
+
+
+@router.get("/data-start")
+async def data_start(ctx: TenantContext = Depends(get_current_context)):
+    """Η πρώτη ημέρα ΤΟΥ ΤΡΕΧΟΝΤΟΣ ΕΤΟΥΣ με συνταγές (ώρα Ελλάδας/Κύπρου) — η προεπιλεγμένη
+    ημερομηνία «Από» του κοινού φίλτρου. Φαρμακείο που μπήκε τον Νοέμβριο δεν βλέπει δέκα κενούς
+    μήνες στα γραφήματα (26/11/2026). Χωρίς συνταγές φέτος → None (μένει η 1η Ιανουαρίου)."""
+    from app.repositories.cy import CyDispensingRepository
+    from app.repositories.tenants import TenantRepository
+    tenant = await TenantRepository(tenant_id=ctx.tenant_id).get() or {}
+    now = datetime.now(ATHENS)
+    year_start = datetime(now.year, 1, 1, tzinfo=ATHENS).astimezone(timezone.utc)
+    if (tenant.get("country") or "GR").upper() == "CY":
+        repo, field, match = CyDispensingRepository(tenant_id=ctx.tenant_id), "dispensed_at", {}
+    else:
+        repo, field, match = PrescriptionRepository(tenant_id=ctx.tenant_id), "executed_at", COUNTABLE_EXEC
+    rows = await repo.aggregate([
+        {"$match": {**match, field: {"$gte": year_start}}},
+        {"$sort": {field: 1}}, {"$limit": 1},
+        {"$project": {"_id": 0, "d": {"$dateToString": {"date": f"${field}", "format": "%Y-%m-%d",
+                                                        "timezone": "Europe/Athens"}}}}])
+    return {"first_date": rows[0]["d"] if rows else None, "year": now.year}
 
 
 @router.get("/summary")

@@ -77,6 +77,8 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("cy_dispensings", [("tenant_id", 1), ("prescription_id", 1)], {}),
     ("cy_dispensings", [("tenant_id", 1), ("patient_ref", 1)], {}),
     ("cy_patients", [("tenant_id", 1), ("pseudo_id", 1)], {"unique": True}),
+    ("cy_portal_requests", [("tenant_id", 1), ("status", 1), ("created_at", -1)], {}),
+    ("cy_portal_requests", [("expires_at", 1)], {"expireAfterSeconds": 0}),
     ("cy_settlements", [("tenant_id", 1), ("month", 1)], {"unique": True}),
     # ανάκληση παρτίδας: αναζήτηση στο EMVS των γραμμών
     ("cy_dispensings", [("tenant_id", 1), ("lines.emvs.lot", 1)], {}),

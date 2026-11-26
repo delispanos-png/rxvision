@@ -26,6 +26,7 @@ import { appAlert, appConfirm, appPrompt } from "@/store/dialogStore";
 import { useT } from "@/store/prefStore";
 import { useCountry } from "@/lib/cy";
 
+import { demoMask } from "@/lib/formatters";
 type Group = { _id: string; name: string; member_count: number };
 type GroupPage = { items: Group[]; total: number };
 type Member = {
@@ -47,7 +48,7 @@ type Lists = { recent: Rec[]; opening: Open[]; pending: Pend[]; loans: Loan[] };
 type Hit = { patient_id: string; name: string | null; amka: string | null };
 
 const eur = (c?: number | null) =>
-  ((c ?? 0) / 100).toLocaleString("el-GR", { style: "currency", currency: "EUR" });
+  demoMask(((c ?? 0) / 100).toLocaleString("el-GR", { style: "currency", currency: "EUR" }));
 const fmt = (s?: string | null) =>
   s ? new Date(s).toLocaleDateString("el-GR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 const ROLES = "Γονέας · Παιδί · Σύζυγος · Άλλο";

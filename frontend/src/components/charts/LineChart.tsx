@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useT } from "@/store/prefStore";
-import { PALETTE, BASE_GRID, axisStyle } from "./theme";
+import { PALETTE, BASE_GRID, axisStyle, demoMoneyAxis } from "./theme";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -54,10 +54,12 @@ export function LineChart({
   const clickable = !!onPointClick;
   const cols = colors && colors.length ? colors : LINE_COLORS;
 
+  const dm = demoMoneyAxis([name, ...resolved.map((s) => s.name)]);
   const option = {
     color: PALETTE,
     grid: BASE_GRID,
     tooltip: {
+      ...(dm.valueFormatter ? { valueFormatter: dm.valueFormatter } : {}),
       appendToBody: true,
       confine: true,
       trigger: "axis",
@@ -69,7 +71,7 @@ export function LineChart({
       ? { top: 0, right: 0, icon: "roundRect", itemWidth: 10, itemHeight: 10, textStyle: { color: "#64748b" } }
       : undefined,
     xAxis: { type: "category", data: labels, boundaryGap: false, ...axisStyle },
-    yAxis: { type: "value", ...axisStyle },
+    yAxis: { type: "value", ...axisStyle, ...(dm.axisLabel ? { axisLabel: { ...axisStyle.axisLabel, ...dm.axisLabel } } : {}) },
     series: resolved.map((s, i) => {
       const color = cols[i % cols.length];
       return {
