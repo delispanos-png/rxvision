@@ -9,7 +9,8 @@ export const scanRxBarcode = (raw: string): string => {
 /** API money values are integer cents → divide by 100 for display. */
 // ── «Πελάτης παρουσίασης»: απόκρυψη μεγάλων ποσών (26/11/2026) ─────────────────────────────────────
 // Σε λογαριασμό παρουσίασης (tenant.demo ή χρήστης mask_pii → claim `demo` στο token) κάθε ποσό με 5+ ακέραια
-// ψηφία δείχνει μόνο τα 3 πρώτα ψηφία: 12.345,67 € → 12.3XX,XX €. Ποσά κάτω από 10.000 μένουν ως έχουν.
+// ψηφία κρύβει τα ΑΡΧΙΚΑ ψηφία (αυτά δείχνουν το μέγεθος): 62.417,35 € → XX.417,35 €. Μένουν ορατά μόνο τα 3
+// τελευταία ψηφία του ακέραιου μέρους + τα δεκαδικά (απόφαση ιδιοκτήτη 27/11). Ποσά κάτω από 10.000: ως έχουν.
 // Η σημαία διαβάζεται ΣΥΓΧΡΟΝΑ από το token (όχι από κλήση API), ώστε να μην «αναβοσβήσουν» τα πραγματικά
 // ποσά πριν φορτώσει κάτι. ΚΑΘΕ μορφοποιητής ποσού (κεντρικός ή τοπικός σελίδας) περνά από το `demoMask`.
 let _demoTok: string | null | undefined;
@@ -30,14 +31,16 @@ export function isDemoMode(): boolean {
   return _demo;
 }
 
-/** Καθαρή συνάρτηση (χωρίς σημαία): κρύβει τα ψηφία από το 4ο και μετά σε κάθε αριθμό με 5+ ακέραια ψηφία. */
+/** Καθαρή συνάρτηση (χωρίς σημαία): σε κάθε αριθμό με 5+ ακέραια ψηφία κρύβει τα αρχικά ψηφία του ακέραιου
+ *  μέρους και αφήνει ορατά μόνο τα 3 τελευταία του + τα δεκαδικά. */
 export function maskBigAmounts(text: string): string {
   return text.replace(/\d[\d.,]*\d|\d/g, (num) => {
     const dec = num.match(/[.,]\d{1,2}$/);                       // δεκαδικό (ελληνικό «,» ή «.» του toFixed)
-    const intDigits = (dec ? num.slice(0, -dec[0].length) : num).replace(/\D/g, "");
-    if (intDigits.length < 5) return num;
+    const intPart = dec ? num.slice(0, -dec[0].length) : num;
+    const intDigits = intPart.replace(/\D/g, "").length;
+    if (intDigits < 5) return num;
     let seen = 0;
-    return num.replace(/\d/g, (d) => (++seen <= 3 ? d : "X"));
+    return intPart.replace(/\d/g, (d) => (++seen <= intDigits - 3 ? "X" : d)) + (dec ? dec[0] : "");
   });
 }
 
