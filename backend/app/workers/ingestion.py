@@ -1018,6 +1018,65 @@ def heal_missing_cda(limit_per_tenant: int = 25) -> dict:
     return _run_async(_run())
 
 
+@celery_app.task(name="app.workers.ingestion.refresh_stale_coupons")
+def refresh_stale_coupons(limit_per_tenant: int = 40) -> dict:
+    """SELF-HEAL (27/11/2026): εγγραφές `barcode:N` που αντλήθηκαν πριν η ΗΔΥΚΑ καταχωρίσει το κουπόνι
+    της φάσης N (`coupons_stale`) → ξαναδιαβάζουμε το CDA και γράφουμε τα κουπόνια/τεμάχια
+    (services/ingestion/coupon_refresh.py). Μόνο φαρμακεία με δικαίωμα συγχρονισμού (ingestion_gate)·
+    το πολύ MAX_ATTEMPTS προσπάθειες ανά εγγραφή· σταματά νωρίς αν η ΗΔΥΚΑ δεν απαντά."""
+    from app.services.ingestion.hdika_client import HdikaClient
+
+    async def _run() -> dict:
+        client, db = _fresh_db()
+        try:
+            from app.api.v1.routers.ingestion import _effective_hdika_creds
+            from app.services.dispensed import rx_root
+            from app.services.ingestion import coupon_refresh as cr
+            from app.services.ingestion_gate import eligible_tenant_ids
+            out = {"barcodes": 0, "items": 0, "still_stale": 0, "failed": 0}
+            for tid in await eligible_tenant_ids(db):
+                barcodes: list[str] = []
+                async for e in db["prescription_executions"].find(
+                        {"tenant_id": tid, "coupons_stale": True,
+                         "coupon_refresh_attempts": {"$not": {"$gte": cr.MAX_ATTEMPTS}}},
+                        {"external_id": 1}).sort("executed_at", -1).limit(limit_per_tenant * 3):
+                    bc = rx_root(e["external_id"])
+                    if bc not in barcodes:
+                        barcodes.append(bc)
+                    if len(barcodes) >= limit_per_tenant:
+                        break
+                if not barcodes:
+                    continue
+                creds = dict(await _effective_hdika_creds(tid))
+                creds.setdefault("throttle", 0.15)
+                cl = HdikaClient(creds)
+                fails = 0
+                try:
+                    for bc in barcodes:
+                        res = await cr.refresh_rx(db, tid, bc, client=cl)
+                        if not res.get("ok"):
+                            out["failed"] += 1
+                            await db["prescription_executions"].update_many(
+                                {"tenant_id": tid, "coupons_stale": True,
+                                 "external_id": {"$regex": "^" + re.escape(bc) + "(:|$)"}},
+                                {"$inc": {"coupon_refresh_attempts": 1}})
+                            fails += 1
+                            if fails >= 5:      # η ΗΔΥΚΑ μάλλον down → ξαναδοκίμασε στο επόμενο run
+                                break
+                            continue
+                        fails = 0
+                        out["barcodes"] += 1
+                        out["items"] += res.get("items", 0)
+                        out["still_stale"] += res.get("still_stale", 0)
+                finally:
+                    cl.close()
+            return out
+        finally:
+            client.close()
+
+    return _run_async(_run())
+
+
 # ── Ειδοποίηση φαρμακοποιού όταν παγώσει ο συγχρονισμός ΗΔΥΚΑ ────────────────────────────────────
 _SETTINGS_URL = "https://app.rxvision.gr/settings/ingestion"
 _AUTH_NOTIFY_MAX_DAYS = 5       # μία υπενθύμιση/ημέρα, το πολύ 5· μετά σιωπή (δεν γινόμαστε spam)

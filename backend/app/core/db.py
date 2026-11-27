@@ -130,6 +130,9 @@ INDEXES: list[tuple[str, list[tuple[str, int]], dict]] = [
     ("prescription_executions", [("tenant_id", 1), ("repeat_root", 1)], {}),
     # Ο Σύμβουλος: «επαναλήψεις που λήγουν» σαρώνει παράθυρο valid_until ανά φαρμακείο.
     ("prescription_executions", [("tenant_id", 1), ("valid_until", 1)], {}),
+    # εγγραφές που περιμένουν το κουπόνι της φάσης τους (coupon_refresh) — μικρό, μόνο τα true
+    ("prescription_executions", [("tenant_id", 1), ("coupons_stale", 1)],
+     {"partialFilterExpression": {"coupons_stale": True}, "name": "coupons_stale_partial"}),
     # GLOBAL (cross-tenant) — powers the cross-tenant contamination guard in the ingestion engine:
     # a prescription barcode must live under exactly ONE tenant.
     ("prescription_executions", [("external_id", 1), ("source", 1)], {"name": "guard_external_id_source"}),

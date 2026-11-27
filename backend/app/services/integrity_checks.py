@@ -104,6 +104,14 @@ async def check_tenant(db, tid: str, now: datetime | None = None) -> list[Findin
                   no_items, rate=0.005))
     out.append(_f("qty_here_missing", "Είδη χωρίς `qty_here` (το ingestion δεν το γράφει)", no_qty,
                   sum(len(v) for v in items.values()), tid))
+    # εγγραφή χωρίς το κουπόνι της φάσης της, που η refresh_stale_coupons δεν μπόρεσε να γεμίσει
+    # (coupon_refresh· 27/11/2026 βρέθηκαν 93 που έμεναν κενές στον «Έλεγχο Barcode» για πάντα)
+    from app.services.ingestion.coupon_refresh import MAX_ATTEMPTS
+    stuck = [e["external_id"] async for e in db["prescription_executions"].find(
+        {"tenant_id": tid, "coupons_stale": True, "executed_at": {"$gte": since},
+         "coupon_refresh_attempts": {"$gte": MAX_ATTEMPTS}}, {"external_id": 1})]
+    out.append(_f("coupons_stale", "Εκτέλεση χωρίς το κουπόνι της φάσης της (η ΗΔΥΚΑ δεν το έδωσε μετά από "
+                  f"{MAX_ATTEMPTS} προσπάθειες)", len(stuck), len(exs), tid, stuck, rate=0.002))
 
     # 3) συμμετοχή ασθενή: Σ(συμμετοχή+διαφορά) γραμμών + (1 € ανά συνταγή | στρογγυλοποίηση)
     bad, single = [], 0

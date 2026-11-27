@@ -328,6 +328,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.ingestion.heal_missing_cda",
         "schedule": crontab(minute=40, hour="*/2"),
     },
+    # Κουπόνια που η ΗΔΥΚΑ κρέμασε ΑΡΓΟΤΕΡΑ από την εκτέλεση (coupon_refresh) — ανά 3 ώρες, ελαφρύ:
+    # αγγίζει ΜΟΝΟ εγγραφές με coupons_stale (δεκάδες σε όλη την πλατφόρμα).
+    "refresh-stale-coupons": {
+        "task": "app.workers.ingestion.refresh_stale_coupons",
+        "schedule": crontab(minute=50, hour="*/3"),
+    },
     # Κανονικοποίηση περιοχής — εβδομαδιαίο AI πέρασμα για νέες/άγνωστες τιμές (Κυριακή 04:10 UTC)
     "refresh-area-canonical": {
         "task": "app.workers.area_canonical.refresh_area_canonical",

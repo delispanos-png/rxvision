@@ -52,11 +52,17 @@ def _now() -> datetime:
 _PARSE_VERSION = "v7-galenic"
 
 
-def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int) -> str:
+def _content_hash(ex: CanonicalExecution, amount_total: int, claimed: int,
+                  coupons_stale: bool = False) -> str:
     parts = [_PARSE_VERSION, ex.source, ex.external_id, ex.executed_at.isoformat(),
              str(amount_total), str(claimed), str(ex.repeat_current), str(ex.repeat_total),
              ",".join(sorted(ex.icd10)),
              ";".join(sorted(f"{i.barcode}:{i.quantity}:{i.retail_price}" for i in ex.items))]
+    # Στιγμιότυπο ΠΡΙΝ η ΗΔΥΚΑ κρεμάσει το κουπόνι αυτής της φάσης (coupon_refresh.stale_phase): άλλο
+    # hash, ώστε η επόμενη άντληση με το κουπόνι να ΞΑΝΑΓΡΑΨΕΙ την εγγραφή αντί για «duplicate».
+    # Μόνο ως προσθήκη → τα hashes των υγιών εγγραφών μένουν ίδια (καμία μαζική επανεγγραφή).
+    if coupons_stale:
+        parts.append("coupons-stale")
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
@@ -339,7 +345,10 @@ class IngestionEngine:
             amount_total = ex.amount_total
         patient_share = ex.patient_share or 0
         amount_claimed = amount_total - patient_share
-        chash = _content_hash(ex, amount_total, amount_claimed)
+        from app.services.ingestion.coupon_refresh import stale_phase
+        coupons_stale = stale_phase([(i.details or {}).get("coupons") for i in ex.items],
+                                    dispensed.record_no(ex.external_id))
+        chash = _content_hash(ex, amount_total, amount_claimed, coupons_stale)
 
         nat_key = {"tenant_id": self.tenant_id, "source": ex.source, "external_id": ex.external_id}
         existing = await self.db["prescription_executions"].find_one(nat_key, {"hash": 1})  # tenant-ok: nat_key carries tenant_id
@@ -368,6 +377,8 @@ class IngestionEngine:
             "status": ("partial" if any(not i.is_executed for i in ex.items) else "executed"),
             "has_unexecuted_substances": any(not i.is_executed for i in ex.items),
             "next_open_date": next_open, "hash": chash, "ingested_at": _now(),
+            # η νυχτερινή refresh_stale_coupons ξαναδιαβάζει το CDA όσων λείπει το κουπόνι της φάσης
+            "coupons_stale": coupons_stale,
             "sync_job_id": job_id, "details": ex.details or {},
         }
         # Content άλλαξε (περάσαμε το hash-equal early-return) → οι τιμές CDA ξαναγράφονται. ΚΑΘΑΡΙΣΕ

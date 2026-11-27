@@ -1547,6 +1547,16 @@ class ReimbursementRepository(BaseRepository):
         if scope_exec is not None:
             # ΜΙΑ φάση: τα κουπόνια ΑΥΤΗΣ της εκτέλεσης (το CDA δεν ξεχωρίζει φάσεις → stored)
             lines, flags = await self._rx_lines([e["_id"] for e in scoped], exec_no=scope_exec)
+            # Κανένα κουπόνι αυτής της φάσης = στιγμιότυπο πριν η ΗΔΥΚΑ καταχωρίσει την εκτέλεση
+            # (coupon_refresh). Στο άνοιγμα (live) ξαναδιαβάζουμε ΜΙΑ φορά το CDA και αποθηκεύουμε.
+            if live and not lines and scoped[0].get("coupons_stale") is True:
+                from app.services.ingestion.coupon_refresh import refresh_rx
+                try:
+                    res = await refresh_rx(self._db, self.tenant_id, bc)
+                except Exception:  # noqa: BLE001 — η οθόνη δεν πέφτει αν η ΗΔΥΚΑ δεν απαντά
+                    res = {}
+                if res.get("items"):
+                    lines, flags = await self._rx_lines([e["_id"] for e in scoped], exec_no=scope_exec)
         else:
             cda_l, cda_f = (await self._coupons_from_cda(cda_lines)) if cda_lines else ([], set())
             stored_l, stored_f = await self._rx_lines([e["_id"] for e in exs])
